@@ -4,7 +4,7 @@ import MetricCard from "../components/MetricCard";
 import { getUser } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
-export default function UserDetailPage() {
+export default function UserDetailPage({ refreshToken = 0 }) {
   const { email } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,7 +30,7 @@ export default function UserDetailPage() {
     return () => {
       mounted = false;
     };
-  }, [email]);
+  }, [email, refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading user...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { getUsers } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
-export default function UsersPage() {
+export default function UsersPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -23,8 +23,8 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    load(query.trim());
+  }, [refreshToken]);
 
   return (
     <div className="card space-y-4">

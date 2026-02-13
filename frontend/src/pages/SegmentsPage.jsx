@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { getSegments } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
-export default function SegmentsPage() {
+export default function SegmentsPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [segments, setSegments] = useState([]);
@@ -25,7 +25,7 @@ export default function SegmentsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading segments...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;

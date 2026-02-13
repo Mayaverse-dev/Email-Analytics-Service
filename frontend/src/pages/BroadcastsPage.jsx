@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { getBroadcasts } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
-export default function BroadcastsPage() {
+export default function BroadcastsPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [data, setData] = useState([]);
@@ -25,7 +25,7 @@ export default function BroadcastsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading broadcasts...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;

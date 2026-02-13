@@ -182,7 +182,7 @@ class SyncService:
                         segment_id,
                         str(segment.get("name") or ""),
                         _parse_timestamp(segment.get("created_at")),
-                        len(segment_contact_map.get(str(segment_id), set())),
+                        0,
                     )
                 )
 
@@ -428,17 +428,15 @@ class SyncService:
                 for email in emails:
                     email_to_segments[email].add(segment_id)
 
-            contact_rows: list[tuple[Any, ...]] = []
-            seen_emails: set[str] = set()
+            contact_by_email: dict[str, dict[str, Any]] = {}
             for contact in contacts:
                 email = str(contact.get("email") or "").strip().lower()
-                contact_id = str(contact.get("id") or "").strip()
-                if not email:
-                    continue
-                if not contact_id:
-                    contact_id = f"contact:{email}"
+                if email:
+                    contact_by_email[email] = contact
 
-                seen_emails.add(email)
+            contact_rows: list[tuple[Any, ...]] = []
+            for email in sorted(user_agg.keys()):
+                contact = contact_by_email.get(email, {})
                 metrics = user_agg.get(
                     email,
                     {
@@ -450,6 +448,7 @@ class SyncService:
                         "total_suppressed": 0,
                     },
                 )
+                contact_id = str(contact.get("id") or "").strip() or f"contact:{email}"
                 delivered = metrics["total_delivered"]
                 open_rate = (metrics["total_opened"] / delivered * 100) if delivered else 0
                 click_rate = (metrics["total_clicked"] / delivered * 100) if delivered else 0
@@ -461,31 +460,6 @@ class SyncService:
                         contact.get("first_name"),
                         contact.get("last_name"),
                         bool(contact.get("unsubscribed") or False),
-                        sorted(email_to_segments.get(email, set())),
-                        metrics["total_sent"],
-                        metrics["total_delivered"],
-                        metrics["total_opened"],
-                        metrics["total_clicked"],
-                        metrics["total_bounced"],
-                        metrics["total_suppressed"],
-                        round(open_rate, 4),
-                        round(click_rate, 4),
-                    )
-                )
-
-            for email, metrics in user_agg.items():
-                if email in seen_emails:
-                    continue
-                delivered = metrics["total_delivered"]
-                open_rate = (metrics["total_opened"] / delivered * 100) if delivered else 0
-                click_rate = (metrics["total_clicked"] / delivered * 100) if delivered else 0
-                contact_rows.append(
-                    (
-                        f"contact:{email}",
-                        email,
-                        None,
-                        None,
-                        False,
                         sorted(email_to_segments.get(email, set())),
                         metrics["total_sent"],
                         metrics["total_delivered"],
@@ -600,13 +574,26 @@ class SyncService:
             )
 
             if segment_upserts:
+                webhook_segment_contact_counts: dict[str, int] = {}
+                webhook_user_emails = set(user_agg.keys())
+                for segment_id, emails in segment_contact_map.items():
+                    webhook_segment_contact_counts[segment_id] = sum(
+                        1 for email in emails if email in webhook_user_emails
+                    )
+
                 cur.executemany(
                     """
                     UPDATE analytics_segments
                     SET total_contacts = %s, synced_at = NOW()
                     WHERE id = %s
                     """,
-                    [(row[3], row[0]) for row in segment_upserts],
+                    [
+                        (
+                            webhook_segment_contact_counts.get(str(row[0]), 0),
+                            row[0],
+                        )
+                        for row in segment_upserts
+                    ],
                 )
 
         conn.commit()

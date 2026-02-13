@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from config import settings
-from database import run_migrations
+from database import close_db_pool, init_db_pool, run_migrations
 from routers import broadcasts, segments, sync, users
 
 app = FastAPI(title="Maya Email Analytics Service", version="0.1.0")
@@ -28,7 +28,13 @@ app.include_router(segments.router, prefix="/api", tags=["segments"])
 
 @app.on_event("startup")
 def on_startup() -> None:
+    init_db_pool()
     run_migrations()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    close_db_pool()
 
 
 @app.get("/api/health")

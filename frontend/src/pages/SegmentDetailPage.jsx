@@ -4,7 +4,7 @@ import MetricCard from "../components/MetricCard";
 import { getSegment } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
-export default function SegmentDetailPage() {
+export default function SegmentDetailPage({ refreshToken = 0 }) {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -32,7 +32,7 @@ export default function SegmentDetailPage() {
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [id, refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading segment...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;

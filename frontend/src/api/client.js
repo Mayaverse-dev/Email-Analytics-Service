@@ -25,6 +25,10 @@ export function getSyncStatus() {
   return request("/api/sync/status");
 }
 
+export function clearSyncedData() {
+  return request("/api/sync/clear", { method: "POST" });
+}
+
 export function getBroadcasts(params = {}) {
   const query = new URLSearchParams(params).toString();
   return request(`/api/broadcasts${query ? `?${query}` : ""}`);

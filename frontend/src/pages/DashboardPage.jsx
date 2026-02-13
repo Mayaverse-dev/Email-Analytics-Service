@@ -4,7 +4,7 @@ import MetricCard from "../components/MetricCard";
 import { getBroadcasts, getSegments, getSyncStatus, getUsers } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
-export default function DashboardPage() {
+export default function DashboardPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [stats, setStats] = useState({
@@ -59,7 +59,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading dashboard...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;

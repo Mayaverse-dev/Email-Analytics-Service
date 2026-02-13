@@ -4,7 +4,7 @@ import MetricCard from "../components/MetricCard";
 import { getBroadcast, getBroadcastRecipients } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
-export default function BroadcastDetailPage() {
+export default function BroadcastDetailPage({ refreshToken = 0 }) {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -36,7 +36,7 @@ export default function BroadcastDetailPage() {
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [id, refreshToken]);
 
   if (loading) return <p className="text-sm text-slate-600">Loading broadcast...</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;
