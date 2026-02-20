@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Radio, Clock, Loader2 } from "lucide-react";
 import { getBroadcasts } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
 
@@ -27,55 +28,109 @@ export default function BroadcastsPage({ refreshToken = 0 }) {
     };
   }, [refreshToken]);
 
-  if (loading) return <p className="text-sm text-slate-600">Loading broadcasts...</p>;
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin" style={{ color: "var(--accent)" }} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-900/20">
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="card">
-      <h2 className="mb-4 text-lg font-semibold text-slate-900">Broadcast Analytics</h2>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left">
-          <thead>
-            <tr className="text-xs uppercase tracking-wide text-slate-500">
-              <th className="table-cell">Broadcast</th>
-              <th className="table-cell">Status</th>
-              <th className="table-cell">Sent</th>
-              <th className="table-cell">Delivered</th>
-              <th className="table-cell">Opened</th>
-              <th className="table-cell">Clicked</th>
-              <th className="table-cell">Open Rate</th>
-              <th className="table-cell">Click Rate</th>
-              <th className="table-cell">Sent At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row) => (
-              <tr key={row.id}>
-                <td className="table-cell">
-                  <Link to={`/broadcasts/${row.id}`} className="font-medium">
-                    {row.name || row.id}
-                  </Link>
-                  <p className="text-xs text-slate-500">{row.subject || "-"}</p>
-                </td>
-                <td className="table-cell">{row.status}</td>
-                <td className="table-cell">{fmtInt(row.total_sent)}</td>
-                <td className="table-cell">{fmtInt(row.total_delivered)}</td>
-                <td className="table-cell">{fmtInt(row.total_opened)}</td>
-                <td className="table-cell">{fmtInt(row.total_clicked)}</td>
-                <td className="table-cell">{fmtPercent(row.open_rate)}</td>
-                <td className="table-cell">{fmtPercent(row.click_rate)}</td>
-                <td className="table-cell">{fmtDate(row.sent_at || row.created_at)}</td>
-              </tr>
-            ))}
-            {data.length === 0 ? (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div
+          className="flex h-12 w-12 items-center justify-center rounded-xl"
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+        >
+          <Radio className="h-6 w-6" style={{ color: "var(--accent)" }} />
+        </div>
+        <div>
+          <h1 className="page-title">Broadcasts</h1>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            {data.length} total broadcasts
+          </p>
+        </div>
+      </div>
+
+      <div className="card p-0">
+        <div className="table-container border-0">
+          <table className="min-w-full">
+            <thead className="table-header">
               <tr>
-                <td className="table-cell text-slate-500" colSpan={9}>
-                  No broadcasts available.
-                </td>
+                <th>Broadcast</th>
+                <th>Status</th>
+                <th>Sent</th>
+                <th>Delivered</th>
+                <th>Opened</th>
+                <th>Clicked</th>
+                <th>Open Rate</th>
+                <th>Click Rate</th>
+                <th>Sent At</th>
               </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((row) => (
+                <tr key={row.id} className="table-row">
+                  <td className="table-cell">
+                    <Link to={`/broadcasts/${row.id}`} className="link font-medium">
+                      {row.name || row.id}
+                    </Link>
+                    <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                      {row.subject || "-"}
+                    </p>
+                  </td>
+                  <td className="table-cell">
+                    <span
+                      className={`badge ${
+                        row.status === "sent" || row.status === "completed"
+                          ? "badge-success"
+                          : row.status === "draft"
+                            ? "badge-info"
+                            : "badge-warning"
+                      }`}
+                    >
+                      {row.status}
+                    </span>
+                  </td>
+                  <td className="table-cell font-medium" style={{ color: "var(--text-primary)" }}>
+                    {fmtInt(row.total_sent)}
+                  </td>
+                  <td className="table-cell">{fmtInt(row.total_delivered)}</td>
+                  <td className="table-cell">{fmtInt(row.total_opened)}</td>
+                  <td className="table-cell">{fmtInt(row.total_clicked)}</td>
+                  <td className="table-cell">{fmtPercent(row.open_rate)}</td>
+                  <td className="table-cell">{fmtPercent(row.click_rate)}</td>
+                  <td className="table-cell">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5" style={{ color: "var(--text-muted)" }} />
+                      {fmtDate(row.sent_at || row.created_at)}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {data.length === 0 ? (
+                <tr>
+                  <td
+                    className="table-cell py-12 text-center"
+                    style={{ color: "var(--text-muted)" }}
+                    colSpan={9}
+                  >
+                    No broadcasts available.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

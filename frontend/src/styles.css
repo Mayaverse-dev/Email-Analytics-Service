@@ -1,19 +1,182 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply text-slate-900 antialiased;
+@layer base {
+  :root {
+    --bg-primary: #faf8da;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f6f5f5;
+    --text-primary: #221d1e;
+    --text-secondary: #504f4f;
+    --text-muted: #6e6c6c;
+    --border-color: #e7e6e6;
+    --accent: #de0136;
+    --accent-hover: #b8002d;
+  }
+
+  .dark {
+    --bg-primary: #221d1e;
+    --bg-secondary: #2d2829;
+    --bg-tertiary: #3d3c3c;
+    --text-primary: #faf8da;
+    --text-secondary: #d1d0d0;
+    --text-muted: #898787;
+    --border-color: #464545;
+    --accent: #de0136;
+    --accent-hover: #ea456c;
+  }
+
+  body {
+    @apply font-sans antialiased transition-colors duration-200;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+  }
 }
 
-a {
-  @apply text-blue-700 hover:text-blue-900;
-}
+@layer components {
+  .card {
+    @apply rounded-xl border p-5 shadow-sm transition-all duration-200;
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color);
+  }
 
-.card {
-  @apply rounded-lg border border-slate-200 bg-white p-4 shadow-sm;
-}
+  .card:hover {
+    @apply shadow-md;
+  }
 
-.table-cell {
-  @apply border-b border-slate-100 px-3 py-2 text-sm;
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-200;
+    background-color: var(--accent);
+    color: #ffffff;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--accent-hover);
+    @apply shadow-lg;
+  }
+
+  .btn-primary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all duration-200;
+    border-color: var(--border-color);
+    color: var(--text-primary);
+    background-color: var(--bg-secondary);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--bg-tertiary);
+  }
+
+  .btn-secondary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200;
+    color: var(--text-secondary);
+  }
+
+  .btn-ghost:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .input {
+    @apply w-full rounded-lg border px-4 py-2.5 text-sm transition-all duration-200 outline-none;
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .input:focus {
+    border-color: var(--accent);
+    @apply ring-2;
+    --tw-ring-color: rgba(222, 1, 54, 0.2);
+  }
+
+  .input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .table-container {
+    @apply overflow-x-auto rounded-lg border;
+    border-color: var(--border-color);
+  }
+
+  .table-header {
+    @apply text-left text-xs font-semibold uppercase tracking-wider;
+    color: var(--text-muted);
+    background-color: var(--bg-tertiary);
+  }
+
+  .table-header th {
+    @apply px-4 py-3;
+  }
+
+  .table-row {
+    @apply border-t transition-colors duration-150;
+    border-color: var(--border-color);
+  }
+
+  .table-row:hover {
+    background-color: var(--bg-tertiary);
+  }
+
+  .table-cell {
+    @apply px-4 py-3 text-sm;
+    color: var(--text-secondary);
+  }
+
+  .link {
+    color: var(--accent);
+    @apply font-medium transition-colors duration-150;
+  }
+
+  .link:hover {
+    color: var(--accent-hover);
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400;
+  }
+
+  .badge-warning {
+    @apply bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400;
+  }
+
+  .badge-error {
+    @apply bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400;
+  }
+
+  .badge-info {
+    @apply bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold tracking-tight;
+    color: var(--text-primary);
+  }
+
+  .section-title {
+    @apply text-lg font-semibold;
+    color: var(--text-primary);
+  }
+
+  .text-muted {
+    color: var(--text-muted);
+  }
+
+  .text-secondary {
+    color: var(--text-secondary);
+  }
 }

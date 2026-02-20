@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Layers, Loader2 } from "lucide-react";
 import { getSegments } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
@@ -27,52 +28,87 @@ export default function SegmentsPage({ refreshToken = 0 }) {
     };
   }, [refreshToken]);
 
-  if (loading) return <p className="text-sm text-slate-600">Loading segments...</p>;
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin" style={{ color: "var(--accent)" }} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-900/20">
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="card">
-      <h2 className="mb-4 text-lg font-semibold text-slate-900">Segment Analytics</h2>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left">
-          <thead>
-            <tr className="text-xs uppercase tracking-wide text-slate-500">
-              <th className="table-cell">Segment</th>
-              <th className="table-cell">Contacts</th>
-              <th className="table-cell">Broadcasts</th>
-              <th className="table-cell">Delivered</th>
-              <th className="table-cell">Opened</th>
-              <th className="table-cell">Clicked</th>
-              <th className="table-cell">Open Rate</th>
-              <th className="table-cell">Click Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {segments.map((segment) => (
-              <tr key={segment.id}>
-                <td className="table-cell">
-                  <Link to={`/segments/${segment.id}`} className="font-medium">
-                    {segment.name || segment.id}
-                  </Link>
-                </td>
-                <td className="table-cell">{fmtInt(segment.total_contacts)}</td>
-                <td className="table-cell">{fmtInt(segment.total_broadcasts)}</td>
-                <td className="table-cell">{fmtInt(segment.total_delivered)}</td>
-                <td className="table-cell">{fmtInt(segment.total_opened)}</td>
-                <td className="table-cell">{fmtInt(segment.total_clicked)}</td>
-                <td className="table-cell">{fmtPercent(segment.open_rate)}</td>
-                <td className="table-cell">{fmtPercent(segment.click_rate)}</td>
-              </tr>
-            ))}
-            {segments.length === 0 ? (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div
+          className="flex h-12 w-12 items-center justify-center rounded-xl"
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+        >
+          <Layers className="h-6 w-6" style={{ color: "var(--accent)" }} />
+        </div>
+        <div>
+          <h1 className="page-title">Segments</h1>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            {segments.length} total segments
+          </p>
+        </div>
+      </div>
+
+      <div className="card p-0">
+        <div className="table-container border-0">
+          <table className="min-w-full">
+            <thead className="table-header">
               <tr>
-                <td className="table-cell text-slate-500" colSpan={8}>
-                  No segments found.
-                </td>
+                <th>Segment</th>
+                <th>Contacts</th>
+                <th>Broadcasts</th>
+                <th>Delivered</th>
+                <th>Opened</th>
+                <th>Clicked</th>
+                <th>Open Rate</th>
+                <th>Click Rate</th>
               </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {segments.map((segment) => (
+                <tr key={segment.id} className="table-row">
+                  <td className="table-cell">
+                    <Link to={`/segments/${segment.id}`} className="link font-medium">
+                      {segment.name || segment.id}
+                    </Link>
+                  </td>
+                  <td className="table-cell font-medium" style={{ color: "var(--text-primary)" }}>
+                    {fmtInt(segment.total_contacts)}
+                  </td>
+                  <td className="table-cell">{fmtInt(segment.total_broadcasts)}</td>
+                  <td className="table-cell">{fmtInt(segment.total_delivered)}</td>
+                  <td className="table-cell">{fmtInt(segment.total_opened)}</td>
+                  <td className="table-cell">{fmtInt(segment.total_clicked)}</td>
+                  <td className="table-cell">{fmtPercent(segment.open_rate)}</td>
+                  <td className="table-cell">{fmtPercent(segment.click_rate)}</td>
+                </tr>
+              ))}
+              {segments.length === 0 ? (
+                <tr>
+                  <td
+                    className="table-cell py-12 text-center"
+                    style={{ color: "var(--text-muted)" }}
+                    colSpan={8}
+                  >
+                    No segments found.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

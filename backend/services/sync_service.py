@@ -148,6 +148,10 @@ class SyncService:
                         segment_id,
                         _parse_timestamp(broadcast.get("created_at")),
                         _parse_timestamp(broadcast.get("sent_at")),
+                        broadcast.get("html"),
+                        broadcast.get("text"),
+                        broadcast.get("preview_text"),
+                        broadcast.get("reply_to"),
                     )
                 )
 
@@ -155,9 +159,10 @@ class SyncService:
                 cur.executemany(
                     """
                     INSERT INTO analytics_broadcasts (
-                        id, name, subject, from_address, status, segment_id, created_at, sent_at, synced_at
+                        id, name, subject, from_address, status, segment_id, created_at, sent_at,
+                        html_content, text_content, preview_text, reply_to, synced_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (id)
                     DO UPDATE SET
                         name = EXCLUDED.name,
@@ -167,6 +172,10 @@ class SyncService:
                         segment_id = EXCLUDED.segment_id,
                         created_at = EXCLUDED.created_at,
                         sent_at = EXCLUDED.sent_at,
+                        html_content = EXCLUDED.html_content,
+                        text_content = EXCLUDED.text_content,
+                        preview_text = EXCLUDED.preview_text,
+                        reply_to = EXCLUDED.reply_to,
                         synced_at = NOW()
                     """,
                     broadcast_upserts,
@@ -490,12 +499,13 @@ class SyncService:
                         total_suppressed,
                         open_rate,
                         click_rate,
+                        source,
                         synced_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'resend', NOW()
                     )
-                    ON CONFLICT (email)
+                    ON CONFLICT (email, source)
                     DO UPDATE SET
                         id = EXCLUDED.id,
                         first_name = EXCLUDED.first_name,

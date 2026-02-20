@@ -73,6 +73,10 @@ def get_broadcast(broadcast_id: UUID) -> dict:
                   total_suppressed,
                   open_rate::float8 AS open_rate,
                   click_rate::float8 AS click_rate,
+                  html_content,
+                  text_content,
+                  preview_text,
+                  reply_to,
                   synced_at
                 FROM analytics_broadcasts
                 WHERE id = %s
