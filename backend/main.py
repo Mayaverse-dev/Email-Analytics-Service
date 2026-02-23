@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from auth import verify_maya_auth
 from config import settings
 from database import close_db_pool, init_db_pool, run_migrations
 from routers import broadcasts, segments, sync, users
@@ -20,10 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(sync.router, prefix="/api", tags=["sync"])
-app.include_router(broadcasts.router, prefix="/api", tags=["broadcasts"])
-app.include_router(users.router, prefix="/api", tags=["users"])
-app.include_router(segments.router, prefix="/api", tags=["segments"])
+auth_dep = [Depends(verify_maya_auth)]
+
+app.include_router(sync.router, prefix="/api", tags=["sync"], dependencies=auth_dep)
+app.include_router(broadcasts.router, prefix="/api", tags=["broadcasts"], dependencies=auth_dep)
+app.include_router(users.router, prefix="/api", tags=["users"], dependencies=auth_dep)
+app.include_router(segments.router, prefix="/api", tags=["segments"], dependencies=auth_dep)
 
 
 @app.on_event("startup")
@@ -40,6 +43,16 @@ def on_shutdown() -> None:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/auth/check")
+def auth_check(user: dict = Depends(verify_maya_auth)) -> dict:
+    return {"authenticated": True, "user": user}
+
+
+@app.get("/api/auth/portal-url")
+def portal_url() -> dict:
+    return {"portal_url": settings.portal_url}
 
 
 def _frontend_index() -> Path:

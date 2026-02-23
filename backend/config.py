@@ -22,6 +22,8 @@ class Settings:
         self.kit_api_key = os.getenv("KIT_API_KEY", "").strip()
         self.kit_base_url = os.getenv("KIT_BASE_URL", "https://api.kit.com").strip()
         self.request_timeout_seconds = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
+        self.shared_jwt_secret = os.getenv("SHARED_JWT_SECRET", "").strip()
+        self.portal_url = os.getenv("PORTAL_URL", "https://portal.entermaya.com").strip()
         self.frontend_dist_dir = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 

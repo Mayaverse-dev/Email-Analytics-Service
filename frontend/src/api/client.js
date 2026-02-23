@@ -1,13 +1,38 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
+let _portalUrl = null;
+
+async function getPortalUrl() {
+  if (_portalUrl) return _portalUrl;
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/portal-url`, { credentials: "include" });
+    const data = await res.json();
+    _portalUrl = data.portal_url || "https://portal.entermaya.com";
+  } catch {
+    _portalUrl = "https://portal.entermaya.com";
+  }
+  return _portalUrl;
+}
+
+async function redirectToPortal() {
+  const portalUrl = await getPortalUrl();
+  window.location.href = `${portalUrl}?redirect=${encodeURIComponent(window.location.href)}`;
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
     },
     ...options
   });
+
+  if (response.status === 401) {
+    await redirectToPortal();
+    throw new Error("Not authenticated");
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
