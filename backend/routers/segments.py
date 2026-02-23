@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
+from cache import cache
 from database import get_db
 
 router = APIRouter()
@@ -14,6 +15,11 @@ def list_segments(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
+    cache_key = f"/segments?limit={limit}&offset={offset}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -41,11 +47,18 @@ def list_segments(
             cur.execute("SELECT COUNT(*) AS count FROM analytics_segments")
             total = cur.fetchone()["count"]
 
-    return {"data": rows, "total": total, "limit": limit, "offset": offset}
+    result = {"data": rows, "total": total, "limit": limit, "offset": offset}
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/segments/{segment_id}")
 def get_segment(segment_id: UUID) -> dict:
+    cache_key = f"/segments/{segment_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -111,4 +124,6 @@ def get_segment(segment_id: UUID) -> dict:
             )
             users = cur.fetchall()
 
-    return {"segment": segment, "broadcasts": broadcasts, "users": users}
+    result = {"segment": segment, "broadcasts": broadcasts, "users": users}
+    cache.set(cache_key, result)
+    return result

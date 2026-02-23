@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from cache import cache
 from database import get_db
 
 router = APIRouter()
@@ -14,6 +15,10 @@ def list_users(
     q: str = Query(default=""),
 ) -> dict:
     query = q.strip().lower()
+    cache_key = f"/users?limit={limit}&offset={offset}&q={query}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -80,12 +85,19 @@ def list_users(
                 cur.execute("SELECT COUNT(*) AS count FROM analytics_contacts")
                 total = cur.fetchone()["count"]
 
-    return {"data": rows, "total": total, "limit": limit, "offset": offset}
+    result = {"data": rows, "total": total, "limit": limit, "offset": offset}
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/users/{email}")
 def get_user(email: str) -> dict:
     normalized_email = email.strip().lower()
+    cache_key = f"/users/{normalized_email}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -141,4 +153,6 @@ def get_user(email: str) -> dict:
             )
             history = cur.fetchall()
 
-    return {"user": user, "history": history}
+    result = {"user": user, "history": history}
+    cache.set(cache_key, result)
+    return result

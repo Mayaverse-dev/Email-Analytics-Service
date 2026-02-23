@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -100,25 +99,10 @@ class SyncService:
             segments = client.list_segments()
             contacts = client.list_contacts()
 
-            segment_contact_map: dict[str, set[str]] = defaultdict(set)
-            for segment in segments:
-                segment_id = str(segment.get("id", "")).strip()
-                if not segment_id:
-                    continue
-                try:
-                    segment_contacts = client.list_contacts_for_segment(segment_id)
-                    for contact in segment_contacts:
-                        email = str(contact.get("email", "")).strip().lower()
-                        if email:
-                            segment_contact_map[segment_id].add(email)
-                except RuntimeError:
-                    continue
-
             return {
                 "broadcasts": broadcast_details,
                 "segments": segments,
                 "contacts": contacts,
-                "segment_contact_map": segment_contact_map,
             }
         finally:
             client.close()
@@ -127,7 +111,6 @@ class SyncService:
         broadcasts = metadata["broadcasts"]
         segments = metadata["segments"]
         contacts = metadata["contacts"]
-        segment_contact_map = metadata["segment_contact_map"]
 
         with conn.cursor() as cur:
             broadcast_upserts: list[tuple[Any, ...]] = []
@@ -432,11 +415,6 @@ class SyncService:
                 for row in user_agg_rows
             }
 
-            email_to_segments: dict[str, set[str]] = defaultdict(set)
-            for segment_id, emails in segment_contact_map.items():
-                for email in emails:
-                    email_to_segments[email].add(segment_id)
-
             contact_by_email: dict[str, dict[str, Any]] = {}
             for contact in contacts:
                 email = str(contact.get("email") or "").strip().lower()
@@ -469,7 +447,7 @@ class SyncService:
                         contact.get("first_name"),
                         contact.get("last_name"),
                         bool(contact.get("unsubscribed") or False),
-                        sorted(email_to_segments.get(email, set())),
+                        [],
                         metrics["total_sent"],
                         metrics["total_delivered"],
                         metrics["total_opened"],
@@ -583,28 +561,21 @@ class SyncService:
                 """
             )
 
-            if segment_upserts:
-                webhook_segment_contact_counts: dict[str, int] = {}
-                webhook_user_emails = set(user_agg.keys())
-                for segment_id, emails in segment_contact_map.items():
-                    webhook_segment_contact_counts[segment_id] = sum(
-                        1 for email in emails if email in webhook_user_emails
-                    )
-
-                cur.executemany(
-                    """
-                    UPDATE analytics_segments
-                    SET total_contacts = %s, synced_at = NOW()
-                    WHERE id = %s
-                    """,
-                    [
-                        (
-                            webhook_segment_contact_counts.get(str(row[0]), 0),
-                            row[0],
-                        )
-                        for row in segment_upserts
-                    ],
-                )
+            cur.execute(
+                """
+                UPDATE analytics_segments s
+                SET total_contacts = sub.cnt, synced_at = NOW()
+                FROM (
+                    SELECT b.segment_id AS id,
+                           COUNT(DISTINCT LOWER(r.email_address)) AS cnt
+                    FROM analytics_broadcasts b
+                    JOIN analytics_broadcast_recipients r ON r.broadcast_id = b.id
+                    WHERE b.segment_id IS NOT NULL
+                    GROUP BY b.segment_id
+                ) sub
+                WHERE s.id = sub.id
+                """
+            )
 
         conn.commit()
 
