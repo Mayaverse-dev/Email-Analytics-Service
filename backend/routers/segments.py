@@ -124,6 +124,33 @@ def get_segment(segment_id: UUID) -> dict:
             )
             users = cur.fetchall()
 
-    result = {"segment": segment, "broadcasts": broadcasts, "users": users}
+            segment_id_str = str(segment_id)
+            cur.execute(
+                """
+                SELECT
+                  email,
+                  first_name,
+                  total_sent,
+                  total_delivered,
+                  total_opened,
+                  total_clicked,
+                  open_rate::float8 AS open_rate,
+                  click_rate::float8 AS click_rate,
+                  source
+                FROM analytics_contacts
+                WHERE %s = ANY(segment_ids)
+                ORDER BY email ASC
+                LIMIT 500
+                """,
+                (segment_id_str,),
+            )
+            members = cur.fetchall()
+
+    result = {
+        "segment": segment,
+        "broadcasts": broadcasts,
+        "users": users,
+        "members": members,
+    }
     cache.set(cache_key, result)
     return result

@@ -92,6 +92,10 @@ class KitClient:
     def list_broadcasts(self) -> list[dict[str, Any]]:
         return self._list_paginated("/v4/broadcasts", "broadcasts")
 
+    def get_broadcast(self, broadcast_id: int) -> dict[str, Any]:
+        payload = self._request("GET", f"/v4/broadcasts/{broadcast_id}")
+        return payload.get("broadcast", payload)
+
     def get_broadcast_stats(self, broadcast_id: int) -> dict[str, Any]:
         payload = self._request("GET", f"/v4/broadcasts/{broadcast_id}/stats")
         broadcast = payload.get("broadcast", {})

@@ -368,6 +368,7 @@ class SyncService:
                   synced_at = NOW()
                 FROM agg
                 WHERE b.id = agg.broadcast_id
+                  AND b.source = 'resend'
                 """
             )
             cur.execute(
@@ -383,7 +384,8 @@ class SyncService:
                   open_rate = 0,
                   click_rate = 0,
                   synced_at = NOW()
-                WHERE id NOT IN (SELECT DISTINCT broadcast_id FROM analytics_broadcast_recipients)
+                WHERE source = 'resend'
+                  AND id NOT IN (SELECT DISTINCT broadcast_id FROM analytics_broadcast_recipients)
                 """
             )
 
@@ -544,6 +546,7 @@ class SyncService:
                   synced_at = NOW()
                 FROM agg
                 WHERE s.id = agg.id
+                  AND s.source = 'resend'
                 """
             )
             cur.execute(
@@ -557,7 +560,8 @@ class SyncService:
                   open_rate = 0,
                   click_rate = 0,
                   synced_at = NOW()
-                WHERE id NOT IN (SELECT DISTINCT segment_id FROM analytics_broadcasts WHERE segment_id IS NOT NULL)
+                WHERE source = 'resend'
+                  AND id NOT IN (SELECT DISTINCT segment_id FROM analytics_broadcasts WHERE segment_id IS NOT NULL)
                 """
             )
 
@@ -571,9 +575,11 @@ class SyncService:
                     FROM analytics_broadcasts b
                     JOIN analytics_broadcast_recipients r ON r.broadcast_id = b.id
                     WHERE b.segment_id IS NOT NULL
+                      AND b.source = 'resend'
                     GROUP BY b.segment_id
                 ) sub
                 WHERE s.id = sub.id
+                  AND s.source = 'resend'
                 """
             )
 
