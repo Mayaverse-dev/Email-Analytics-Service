@@ -1,10 +1,170 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Radio, Clock, Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
-import { getBroadcasts } from "../api/client";
+import { Radio, Clock, Loader2, Search, ChevronLeft, ChevronRight, X, MailOpen, Send, MousePointerClick } from "lucide-react";
+import { getBroadcasts, getBroadcast } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
+import MetricCard from "../components/MetricCard";
 
 const PAGE_SIZE = 50;
+
+function SidePanel({ broadcastId, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [broadcast, setBroadcast] = useState(null);
+  const [error, setError] = useState("");
+  const [contentView, setContentView] = useState("html");
+
+  useEffect(() => {
+    if (!broadcastId) return;
+    let mounted = true;
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await getBroadcast(broadcastId);
+        if (mounted) setBroadcast(res.broadcast);
+      } catch (err) {
+        if (mounted) setError(err.message || "Failed to load");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => { mounted = false; };
+  }, [broadcastId]);
+
+  return (
+    <div
+      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col shadow-2xl"
+      style={{ backgroundColor: "var(--bg-primary)", borderLeft: "1px solid var(--border)" }}
+    >
+      <div
+        className="flex items-center justify-between border-b px-6 py-4"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+          {loading ? "Loading..." : broadcast?.subject || "Broadcast"}
+        </h2>
+        <button onClick={onClose} className="btn-ghost p-1.5">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        {loading && (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin" style={{ color: "var(--accent)" }} />
+          </div>
+        )}
+        {error && (
+          <p className="text-sm text-red-600">{error}</p>
+        )}
+        {!loading && broadcast && (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                <span className="font-medium">From:</span> {broadcast.from_address || "—"}
+              </p>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                <span className="font-medium">Sent:</span> {fmtDate(broadcast.sent_at || broadcast.created_at)}
+              </p>
+              {broadcast.preview_text && (
+                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                  <span className="font-medium">Preview:</span> {broadcast.preview_text}
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <MetricCard label="Sent" value={fmtInt(broadcast.total_sent)} icon={Send} compact />
+              <MetricCard label="Opened" value={fmtInt(broadcast.total_opened)} icon={MailOpen} compact />
+              <MetricCard label="Clicked" value={fmtInt(broadcast.total_clicked)} icon={MousePointerClick} compact />
+              <MetricCard label="Open Rate" value={fmtPercent(broadcast.open_rate)} compact />
+              <MetricCard label="Click Rate" value={fmtPercent(broadcast.click_rate)} compact />
+              <MetricCard label="Delivered" value={fmtInt(broadcast.total_delivered)} compact />
+            </div>
+
+            {(broadcast.html_content || broadcast.text_content) && (
+              <div>
+                <div className="mb-3 flex gap-2">
+                  {broadcast.html_content && (
+                    <button
+                      onClick={() => setContentView("html")}
+                      className={`rounded px-3 py-1 text-xs font-medium ${
+                        contentView === "html" ? "btn-primary" : "btn-secondary"
+                      }`}
+                    >
+                      HTML Preview
+                    </button>
+                  )}
+                  {broadcast.text_content && (
+                    <button
+                      onClick={() => setContentView("text")}
+                      className={`rounded px-3 py-1 text-xs font-medium ${
+                        contentView === "text" ? "btn-primary" : "btn-secondary"
+                      }`}
+                    >
+                      Plain Text
+                    </button>
+                  )}
+                  {broadcast.html_content && (
+                    <button
+                      onClick={() => setContentView("source")}
+                      className={`rounded px-3 py-1 text-xs font-medium ${
+                        contentView === "source" ? "btn-primary" : "btn-secondary"
+                      }`}
+                    >
+                      HTML Source
+                    </button>
+                  )}
+                </div>
+                {contentView === "html" && broadcast.html_content && (
+                  <div className="rounded border" style={{ borderColor: "var(--border)" }}>
+                    <iframe
+                      srcDoc={broadcast.html_content}
+                      title="Email Preview"
+                      className="h-[500px] w-full rounded border-0"
+                      sandbox="allow-same-origin"
+                      style={{ backgroundColor: "#fff" }}
+                    />
+                  </div>
+                )}
+                {contentView === "text" && broadcast.text_content && (
+                  <pre
+                    className="max-h-[500px] overflow-auto whitespace-pre-wrap rounded border p-4 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {broadcast.text_content}
+                  </pre>
+                )}
+                {contentView === "source" && broadcast.html_content && (
+                  <pre
+                    className="max-h-[500px] overflow-auto whitespace-pre-wrap rounded border p-4 text-xs"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {broadcast.html_content}
+                  </pre>
+                )}
+              </div>
+            )}
+            {!broadcast.html_content && !broadcast.text_content && (
+              <p className="py-8 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                No email content available for this broadcast.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function BroadcastsPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
@@ -13,6 +173,7 @@ export default function BroadcastsPage({ refreshToken = 0 }) {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
 
   async function load(currentQuery = "", currentPage = 0) {
     setLoading(true);
@@ -102,7 +263,7 @@ export default function BroadcastsPage({ refreshToken = 0 }) {
                 <thead className="table-header">
                   <tr>
                     <th>Broadcast</th>
-                    <th>Status</th>
+                    <th>Segment</th>
                     <th>Sent</th>
                     <th>Delivered</th>
                     <th>Opened</th>
@@ -114,27 +275,33 @@ export default function BroadcastsPage({ refreshToken = 0 }) {
                 </thead>
                 <tbody>
                   {data.map((row) => (
-                    <tr key={row.id} className="table-row">
+                    <tr
+                      key={row.id}
+                      className="table-row cursor-pointer"
+                      onClick={() => setSelectedId(row.id)}
+                      style={
+                        selectedId === row.id
+                          ? { backgroundColor: "var(--bg-tertiary)" }
+                          : undefined
+                      }
+                    >
                       <td className="table-cell">
-                        <Link to={`/broadcasts/${row.id}`} className="link font-medium">
-                          {row.name || row.id}
-                        </Link>
-                        <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>
-                          {row.subject || "-"}
-                        </p>
+                        <span className="font-medium" style={{ color: "var(--accent)" }}>
+                          {row.subject || row.name || row.id}
+                        </span>
                       </td>
                       <td className="table-cell">
-                        <span
-                          className={`badge ${
-                            row.status === "sent" || row.status === "completed"
-                              ? "badge-success"
-                              : row.status === "draft"
-                                ? "badge-info"
-                                : "badge-warning"
-                          }`}
-                        >
-                          {row.status}
-                        </span>
+                        {row.segment_name ? (
+                          <Link
+                            to={`/segments/${row.segment_id}`}
+                            className="link text-xs"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {row.segment_name}
+                          </Link>
+                        ) : (
+                          <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
+                        )}
                       </td>
                       <td className="table-cell font-medium" style={{ color: "var(--text-primary)" }}>
                         {fmtInt(row.total_sent)}
@@ -203,6 +370,19 @@ export default function BroadcastsPage({ refreshToken = 0 }) {
           ) : null}
         </>
       ) : null}
+
+      {selectedId && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/30"
+            onClick={() => setSelectedId(null)}
+          />
+          <SidePanel
+            broadcastId={selectedId}
+            onClose={() => setSelectedId(null)}
+          />
+        </>
+      )}
     </div>
   );
 }

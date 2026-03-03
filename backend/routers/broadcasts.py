@@ -22,20 +22,25 @@ def list_broadcasts(
     if cached is not None:
         return cached
 
+    status_filter = "AND b.status IN ('sent', 'completed')"
+
     with get_db() as conn:
         with conn.cursor() as cur:
             if query:
                 cur.execute(
-                    """
+                    f"""
                     SELECT
-                      id, name, subject, from_address, status, segment_id,
-                      created_at, sent_at, total_sent, total_delivered,
-                      total_opened, total_clicked, total_bounced, total_suppressed,
-                      open_rate::float8 AS open_rate, click_rate::float8 AS click_rate,
-                      synced_at
-                    FROM analytics_broadcasts
-                    WHERE LOWER(name) LIKE %s OR LOWER(subject) LIKE %s
-                    ORDER BY COALESCE(sent_at, created_at) DESC NULLS LAST
+                      b.id, b.name, b.subject, b.from_address, b.status, b.segment_id,
+                      s.name AS segment_name,
+                      b.created_at, b.sent_at, b.total_sent, b.total_delivered,
+                      b.total_opened, b.total_clicked, b.total_bounced, b.total_suppressed,
+                      b.open_rate::float8 AS open_rate, b.click_rate::float8 AS click_rate,
+                      b.synced_at
+                    FROM analytics_broadcasts b
+                    LEFT JOIN analytics_segments s ON s.id = b.segment_id
+                    WHERE (LOWER(b.name) LIKE %s OR LOWER(b.subject) LIKE %s)
+                      {status_filter}
+                    ORDER BY COALESCE(b.sent_at, b.created_at) DESC NULLS LAST
                     LIMIT %s OFFSET %s
                     """,
                     (f"%{query}%", f"%{query}%", limit, offset),
@@ -43,31 +48,40 @@ def list_broadcasts(
                 rows = cur.fetchall()
 
                 cur.execute(
-                    """
-                    SELECT COUNT(*) AS count FROM analytics_broadcasts
-                    WHERE LOWER(name) LIKE %s OR LOWER(subject) LIKE %s
+                    f"""
+                    SELECT COUNT(*) AS count FROM analytics_broadcasts b
+                    WHERE (LOWER(b.name) LIKE %s OR LOWER(b.subject) LIKE %s)
+                      {status_filter}
                     """,
                     (f"%{query}%", f"%{query}%"),
                 )
                 total = cur.fetchone()["count"]
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT
-                      id, name, subject, from_address, status, segment_id,
-                      created_at, sent_at, total_sent, total_delivered,
-                      total_opened, total_clicked, total_bounced, total_suppressed,
-                      open_rate::float8 AS open_rate, click_rate::float8 AS click_rate,
-                      synced_at
-                    FROM analytics_broadcasts
-                    ORDER BY COALESCE(sent_at, created_at) DESC NULLS LAST
+                      b.id, b.name, b.subject, b.from_address, b.status, b.segment_id,
+                      s.name AS segment_name,
+                      b.created_at, b.sent_at, b.total_sent, b.total_delivered,
+                      b.total_opened, b.total_clicked, b.total_bounced, b.total_suppressed,
+                      b.open_rate::float8 AS open_rate, b.click_rate::float8 AS click_rate,
+                      b.synced_at
+                    FROM analytics_broadcasts b
+                    LEFT JOIN analytics_segments s ON s.id = b.segment_id
+                    WHERE 1=1 {status_filter}
+                    ORDER BY COALESCE(b.sent_at, b.created_at) DESC NULLS LAST
                     LIMIT %s OFFSET %s
                     """,
                     (limit, offset),
                 )
                 rows = cur.fetchall()
 
-                cur.execute("SELECT COUNT(*) AS count FROM analytics_broadcasts")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS count FROM analytics_broadcasts b
+                    WHERE 1=1 {status_filter}
+                    """
+                )
                 total = cur.fetchone()["count"]
 
     result = {"data": rows, "total": total, "limit": limit, "offset": offset}

@@ -1,58 +1,72 @@
-# Email Analytics Sync Logic
+# Maya Email Analytics Service
 
-This service builds analytics from Resend webhook events stored in Postgres.
+Internal dashboard for tracking email marketing performance across Resend (active) and Kit (historical).
 
-## What sync does
+## Local Development
 
-`POST /api/sync` runs `SyncService` and:
+```bash
+# 1. Start local PostgreSQL
+brew services start postgresql@17
 
-1. Fetches metadata from Resend:
-   - Broadcasts
-   - Contacts
-   - Segments
-2. Reads webhook events from `resend_wh_emails`.
-3. Upserts recipient-level state into `analytics_broadcast_recipients`.
-4. Recomputes aggregate metrics into:
-   - `analytics_broadcasts`
-   - `analytics_contacts`
-   - `analytics_segments`
-5. Writes run status to `analytics_sync_log`.do 
+# 2. Activate virtualenv
+source .venv/bin/activate
 
-## Event filtering rules
+# 3. Start backend (terminal 1)
+cd backend
+uvicorn main:app --reload --port 8000
 
-Only events with a **broadcast context** are included:
+# 4. Start frontend (terminal 2)
+cd frontend
+npm run dev
+```
 
-- SQL filter: `broadcast_id IS NOT NULL`
-- Validation: `broadcast_id` must be a valid UUID
-- Validation: `email_id` must be present
+Frontend: http://localhost:5173
+Backend API: http://localhost:8000/api
 
-So transactional events without `broadcast_id` are intentionally ignored.
+## Scripts
 
-## Idempotency model
+```bash
+cd backend
 
-Sync is safe to run multiple times:
+# Import Kit API data into raw tables (one-time, slow)
+python scripts/import_kit_raw.py
 
-- Recipient rows are keyed by `(broadcast_id, email_id)` and upserted.
-- Aggregates are recomputed from recipient state each run (not incremented blindly).
-- Late-arriving webhook events are picked up on the next sync.
+# Rebuild all analytics from raw data (Kit + Resend)
+python scripts/rebuild_all_analytics.py
 
-## Metric definitions
+# Dump production DB to local
+bash scripts/dump_prod_to_local.sh
 
-Rates are based on delivered count:
+# Seed segment folder structure
+python scripts/seed_segment_folders.py
+```
+
+## Sync
+
+`POST /api/sync` runs the Resend sync:
+
+1. Fetches broadcast metadata, contacts, and segments from Resend API
+2. Reads webhook events from `resend_wh_emails` (only events with valid `broadcast_id`)
+3. Upserts recipient-level state into `analytics_broadcast_recipients`
+4. Recomputes aggregates for broadcasts, contacts, and segments
+5. Appends time-series snapshots
+6. Writes run status to `analytics_sync_log`
+
+Sync is idempotent - safe to run multiple times.
+
+## Metric Definitions
 
 - `open_rate = total_opened / total_delivered * 100`
 - `click_rate = total_clicked / total_delivered * 100`
+- If `total_delivered = 0`, rate is `0`
 
-If `total_delivered = 0`, rate is `0`.
+## API Endpoints
 
-## Why rates can look wrong temporarily
-
-If opens/clicks arrive before a delayed `email.delivered` webhook, a user/broadcast can show inflated rates until the next sync includes that delivery event.
-
-## Useful endpoints
-
-- `POST /api/sync` - trigger sync
+- `POST /api/sync` - trigger Resend sync
 - `GET /api/sync/status` - last sync status
-- `GET /api/broadcasts` - broadcast metrics
-- `GET /api/users` - user metrics
-- `GET /api/segments` - segment metrics
+- `GET /api/broadcasts` - broadcast list (sent/completed only)
+- `GET /api/broadcasts/{id}` - broadcast detail with content
+- `GET /api/users` - contacts with sorting and segment filtering
+- `GET /api/segments` - segments with folder_id
+- `GET /api/segment-folders` - folder tree with contact counts
+- `PUT /api/segments/{id}/folder` - move segment to folder

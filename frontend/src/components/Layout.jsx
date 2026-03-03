@@ -1,11 +1,9 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Link, Outlet } from "react-router-dom";
 import {
-  LayoutDashboard,
   Radio,
   Users,
   Layers,
   RefreshCw,
-  Trash2,
   Sun,
   Moon,
   Loader2,
@@ -14,7 +12,6 @@ import {
 import { useTheme } from "../context/ThemeContext";
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/broadcasts", label: "Broadcasts", icon: Radio },
   { to: "/users", label: "Users", icon: Users },
   { to: "/segments", label: "Segments", icon: Layers }
@@ -41,21 +38,22 @@ export default function Layout({
         }}
       >
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 lg:px-8">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3">
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-lg"
-                style={{ backgroundColor: "var(--accent)" }}
-              >
-                <Mail className="h-5 w-5 text-white" />
-              </div>
-              <h1
-                className="text-lg font-bold tracking-tight"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Maya
-              </h1>
+          <Link to="/" className="flex items-center gap-3">
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-lg"
+              style={{ backgroundColor: "var(--accent)" }}
+            >
+              <Mail className="h-5 w-5 text-white" />
             </div>
+            <h1
+              className="text-lg font-bold tracking-tight"
+              style={{ color: "var(--text-primary)" }}
+            >
+              Maya
+            </h1>
+          </Link>
+
+          <div className="flex items-center gap-2">
             <nav className="hidden items-center gap-1 md:flex">
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -63,7 +61,6 @@ export default function Layout({
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === "/"}
                     className={({ isActive }) =>
                       `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
                         isActive
@@ -83,9 +80,7 @@ export default function Layout({
                 );
               })}
             </nav>
-          </div>
 
-          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={toggleTheme}
@@ -101,22 +96,8 @@ export default function Layout({
 
             <button
               type="button"
-              onClick={onClear}
-              disabled={clearing || syncing}
-              className="btn-secondary hidden sm:inline-flex"
-            >
-              {clearing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              <span className="hidden lg:inline">Clear Data</span>
-            </button>
-
-            <button
-              type="button"
               onClick={onSync}
-              disabled={syncing || clearing}
+              disabled={syncing}
               className="btn-primary"
             >
               {syncing ? (
@@ -148,7 +129,6 @@ export default function Layout({
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === "/"}
                 className={({ isActive }) =>
                   `flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
                     isActive

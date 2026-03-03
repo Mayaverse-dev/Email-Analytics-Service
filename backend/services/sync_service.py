@@ -179,10 +179,19 @@ class SyncService:
                 )
 
             if segment_upserts:
+                cur.execute(
+                    """
+                    SELECT id FROM analytics_segment_folders
+                    WHERE name = 'To Be Tagged' AND parent_id IS NULL
+                    """
+                )
+                tbt_row = cur.fetchone()
+                tbt_folder_id = tbt_row["id"] if tbt_row else None
+
                 cur.executemany(
                     """
-                    INSERT INTO analytics_segments (id, name, created_at, total_contacts, synced_at)
-                    VALUES (%s, %s, %s, %s, NOW())
+                    INSERT INTO analytics_segments (id, name, created_at, total_contacts, folder_id, synced_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (id)
                     DO UPDATE SET
                         name = EXCLUDED.name,
@@ -190,7 +199,7 @@ class SyncService:
                         total_contacts = EXCLUDED.total_contacts,
                         synced_at = NOW()
                     """,
-                    segment_upserts,
+                    [(*row, tbt_folder_id) for row in segment_upserts],
                 )
 
             cur.execute(
@@ -507,10 +516,12 @@ class SyncService:
 
             cur.execute(
                 """
-                INSERT INTO analytics_segments (id, name, synced_at)
-                SELECT DISTINCT segment_id, 'Unknown Segment', NOW()
-                FROM analytics_broadcasts
-                WHERE segment_id IS NOT NULL
+                INSERT INTO analytics_segments (id, name, folder_id, synced_at)
+                SELECT DISTINCT b.segment_id, 'Unknown Segment', f.id, NOW()
+                FROM analytics_broadcasts b
+                LEFT JOIN analytics_segment_folders f
+                    ON f.name = 'To Be Tagged' AND f.parent_id IS NULL
+                WHERE b.segment_id IS NOT NULL
                 ON CONFLICT (id) DO NOTHING
                 """
             )
@@ -583,6 +594,31 @@ class SyncService:
                 """
             )
 
+            cur.execute(
+                """
+                UPDATE analytics_contacts c
+                SET segment_ids = (
+                    SELECT ARRAY(
+                        SELECT DISTINCT unnest
+                        FROM unnest(c.segment_ids || sub.seg_ids)
+                    )
+                )
+                FROM (
+                    SELECT LOWER(r.email_address) AS email,
+                           ARRAY_AGG(DISTINCT b.segment_id::text) AS seg_ids
+                    FROM analytics_broadcast_recipients r
+                    JOIN analytics_broadcasts b ON b.id = r.broadcast_id
+                    WHERE b.segment_id IS NOT NULL
+                      AND b.source = 'resend'
+                    GROUP BY LOWER(r.email_address)
+                ) sub
+                WHERE c.email = sub.email
+                  AND c.source = 'resend'
+                """
+            )
+
+            self._capture_snapshots(cur)
+
         conn.commit()
 
         return {
@@ -593,3 +629,35 @@ class SyncService:
             "recipients_synced": len(recipient_events),
             "last_processed_webhook_received_at": max_webhook_received_at,
         }
+
+    @staticmethod
+    def _capture_snapshots(cur: Any) -> None:
+        cur.execute(
+            """
+            INSERT INTO analytics_broadcast_snapshots
+                (broadcast_id, total_sent, total_delivered, total_opened,
+                 total_clicked, open_rate, click_rate, captured_at)
+            SELECT id, total_sent, total_delivered, total_opened,
+                   total_clicked, open_rate, click_rate, NOW()
+            FROM analytics_broadcasts
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO analytics_segment_snapshots
+                (segment_id, total_contacts, captured_at)
+            SELECT s.id, COALESCE(c.cnt, 0), NOW()
+            FROM analytics_segments s
+            LEFT JOIN LATERAL (
+                SELECT COUNT(DISTINCT email) AS cnt FROM (
+                    SELECT email FROM analytics_contacts
+                    WHERE s.id::text = ANY(segment_ids)
+                    UNION
+                    SELECT LOWER(r.email_address)
+                    FROM analytics_broadcast_recipients r
+                    JOIN analytics_broadcasts b ON b.id = r.broadcast_id
+                    WHERE b.segment_id = s.id
+                ) combined
+            ) c ON true
+            """
+        )

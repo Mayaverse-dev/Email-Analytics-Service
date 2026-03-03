@@ -31,17 +31,31 @@ class ResendClient:
             time.sleep(min_interval - elapsed)
         self._last_request_at = time.monotonic()
 
-    def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        self._throttle()
-        response = self._client.request(method, path, params=params)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"Resend API error {response.status_code} for {path}: {response.text}"
-            )
-        data = response.json()
-        if not isinstance(data, dict):
-            raise RuntimeError(f"Unexpected Resend response shape for {path}")
-        return data
+    def _request(
+        self, method: str, path: str, params: dict[str, Any] | None = None, retries: int = 5
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(retries):
+            self._throttle()
+            try:
+                response = self._client.request(method, path, params=params)
+                if response.status_code == 429:
+                    wait = 2 ** attempt
+                    time.sleep(wait)
+                    continue
+                if response.status_code >= 400:
+                    raise RuntimeError(
+                        f"Resend API error {response.status_code} for {path}: {response.text}"
+                    )
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise RuntimeError(f"Unexpected Resend response shape for {path}")
+                return data
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_error = e
+                wait = 2 ** attempt
+                time.sleep(wait)
+        raise RuntimeError(f"Resend API request failed after {retries} retries: {last_error}")
 
     def _list_paginated(self, path: str) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

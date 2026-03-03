@@ -25,19 +25,32 @@ def list_segments(
             cur.execute(
                 """
                 SELECT
-                  id,
-                  name,
-                  created_at,
-                  total_contacts,
-                  total_broadcasts,
-                  total_delivered,
-                  total_opened,
-                  total_clicked,
-                  open_rate::float8 AS open_rate,
-                  click_rate::float8 AS click_rate,
-                  synced_at
-                FROM analytics_segments
-                ORDER BY total_delivered DESC, name ASC
+                  s.id,
+                  s.name,
+                  s.created_at,
+                  COALESCE(c.cnt, 0) AS total_contacts,
+                  s.total_broadcasts,
+                  s.total_delivered,
+                  s.total_opened,
+                  s.total_clicked,
+                  s.open_rate::float8 AS open_rate,
+                  s.click_rate::float8 AS click_rate,
+                  s.folder_id,
+                  s.synced_at
+                FROM analytics_segments s
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(DISTINCT email) AS cnt FROM (
+                        SELECT email
+                        FROM analytics_contacts
+                        WHERE s.id::text = ANY(segment_ids)
+                        UNION
+                        SELECT LOWER(r.email_address)
+                        FROM analytics_broadcast_recipients r
+                        JOIN analytics_broadcasts b ON b.id = r.broadcast_id
+                        WHERE b.segment_id = s.id
+                    ) combined
+                ) c ON true
+                ORDER BY s.total_delivered DESC, s.name ASC
                 LIMIT %s OFFSET %s
                 """,
                 (limit, offset),

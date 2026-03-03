@@ -85,3 +85,14 @@ export function getSegments(params = {}) {
 export function getSegment(segmentId) {
   return request(`/api/segments/${segmentId}`);
 }
+
+export function getSegmentFolders() {
+  return request("/api/segment-folders");
+}
+
+export function moveSegmentToFolder(segmentId, folderId) {
+  return request(`/api/segments/${segmentId}/folder`, {
+    method: "PUT",
+    body: JSON.stringify({ folder_id: folderId }),
+  });
+}
