@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from auth import verify_maya_auth
 from config import settings
 from database import close_db_pool, init_db_pool, run_migrations
-from routers import broadcasts, segment_folders, segments, sync, users
+from routers import broadcasts, contacts, segment_folders, segments, sync, users
 
 app = FastAPI(title="Maya Email Analytics Service", version="0.1.0")
 
@@ -28,6 +28,7 @@ app.include_router(broadcasts.router, prefix="/api", tags=["broadcasts"], depend
 app.include_router(users.router, prefix="/api", tags=["users"], dependencies=auth_dep)
 app.include_router(segments.router, prefix="/api", tags=["segments"], dependencies=auth_dep)
 app.include_router(segment_folders.router, prefix="/api", tags=["segment-folders"], dependencies=auth_dep)
+app.include_router(contacts.router, prefix="/api", tags=["contacts"], dependencies=auth_dep)
 
 
 @app.on_event("startup")

@@ -35,7 +35,7 @@ function SegmentMultiSelect({ allSegments, selected, onChange }) {
   }, []);
 
   const filtered = allSegments.filter(
-    (s) => s.name.toLowerCase().includes(search.toLowerCase())
+    (s) => (s.display_name || s.name).toLowerCase().includes(search.toLowerCase())
   );
 
   function toggle(id) {
@@ -104,7 +104,7 @@ function SegmentMultiSelect({ allSegments, selected, onChange }) {
                   onChange={() => toggle(seg.id)}
                   className="rounded"
                 />
-                <span className="truncate">{seg.name}</span>
+                <span className="truncate">{seg.display_name || seg.name}</span>
               </label>
             ))}
             {filtered.length === 0 && (
@@ -124,7 +124,7 @@ function SegmentMultiSelect({ allSegments, selected, onChange }) {
               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
               style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-secondary)" }}
             >
-              {seg.name}
+              {seg.display_name || seg.name}
               <button onClick={() => toggle(seg.id)} className="hover:opacity-70">
                 <X className="h-3 w-3" />
               </button>

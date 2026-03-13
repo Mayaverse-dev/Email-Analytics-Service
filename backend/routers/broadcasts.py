@@ -31,7 +31,7 @@ def list_broadcasts(
                     f"""
                     SELECT
                       b.id, b.name, b.subject, b.from_address, b.status, b.segment_id,
-                      s.name AS segment_name,
+                      COALESCE(s.display_name, s.name) AS segment_name,
                       b.created_at, b.sent_at, b.total_sent, b.total_delivered,
                       b.total_opened, b.total_clicked, b.total_bounced, b.total_suppressed,
                       b.open_rate::float8 AS open_rate, b.click_rate::float8 AS click_rate,
@@ -61,7 +61,7 @@ def list_broadcasts(
                     f"""
                     SELECT
                       b.id, b.name, b.subject, b.from_address, b.status, b.segment_id,
-                      s.name AS segment_name,
+                      COALESCE(s.display_name, s.name) AS segment_name,
                       b.created_at, b.sent_at, b.total_sent, b.total_delivered,
                       b.total_opened, b.total_clicked, b.total_bounced, b.total_suppressed,
                       b.open_rate::float8 AS open_rate, b.click_rate::float8 AS click_rate,

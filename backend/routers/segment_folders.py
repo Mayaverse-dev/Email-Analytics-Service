@@ -65,9 +65,9 @@ def get_segment_folders() -> dict:
                         continue
                     cur.execute(
                         """
-                        SELECT COUNT(DISTINCT email) AS cnt
-                        FROM analytics_contacts
-                        WHERE segment_ids && %s::text[]
+                        SELECT COUNT(DISTINCT contact_email) AS cnt
+                        FROM contact_segment_memberships
+                        WHERE segment_id = ANY(%s::uuid[])
                         """,
                         (seg_ids,),
                     )

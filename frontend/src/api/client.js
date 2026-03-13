@@ -96,3 +96,10 @@ export function moveSegmentToFolder(segmentId, folderId) {
     body: JSON.stringify({ folder_id: folderId }),
   });
 }
+
+export function renameSegment(segmentId, displayName) {
+  return request(`/api/segments/${segmentId}/name`, {
+    method: "PUT",
+    body: JSON.stringify({ display_name: displayName }),
+  });
+}

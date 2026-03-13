@@ -3,11 +3,16 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from cache import cache
 from database import get_db
 
 router = APIRouter()
+
+
+class RenameSegmentRequest(BaseModel):
+    display_name: str
 
 
 @router.get("/segments")
@@ -27,6 +32,7 @@ def list_segments(
                 SELECT
                   s.id,
                   s.name,
+                  s.display_name,
                   s.created_at,
                   COALESCE(c.cnt, 0) AS total_contacts,
                   s.total_broadcasts,
@@ -39,16 +45,9 @@ def list_segments(
                   s.synced_at
                 FROM analytics_segments s
                 LEFT JOIN LATERAL (
-                    SELECT COUNT(DISTINCT email) AS cnt FROM (
-                        SELECT email
-                        FROM analytics_contacts
-                        WHERE s.id::text = ANY(segment_ids)
-                        UNION
-                        SELECT LOWER(r.email_address)
-                        FROM analytics_broadcast_recipients r
-                        JOIN analytics_broadcasts b ON b.id = r.broadcast_id
-                        WHERE b.segment_id = s.id
-                    ) combined
+                    SELECT COUNT(DISTINCT contact_email) AS cnt
+                    FROM contact_segment_memberships
+                    WHERE segment_id = s.id
                 ) c ON true
                 ORDER BY s.total_delivered DESC, s.name ASC
                 LIMIT %s OFFSET %s
@@ -79,6 +78,7 @@ def get_segment(segment_id: UUID) -> dict:
                 SELECT
                   id,
                   name,
+                  display_name,
                   created_at,
                   total_contacts,
                   total_broadcasts,
@@ -137,25 +137,25 @@ def get_segment(segment_id: UUID) -> dict:
             )
             users = cur.fetchall()
 
-            segment_id_str = str(segment_id)
             cur.execute(
                 """
                 SELECT
-                  email,
-                  first_name,
-                  total_sent,
-                  total_delivered,
-                  total_opened,
-                  total_clicked,
-                  open_rate::float8 AS open_rate,
-                  click_rate::float8 AS click_rate,
-                  source
-                FROM analytics_contacts
-                WHERE %s = ANY(segment_ids)
-                ORDER BY email ASC
+                  c.email,
+                  c.first_name,
+                  c.total_sent,
+                  c.total_delivered,
+                  c.total_opened,
+                  c.total_clicked,
+                  c.open_rate::float8 AS open_rate,
+                  c.click_rate::float8 AS click_rate,
+                  c.source
+                FROM contact_segment_memberships m
+                JOIN analytics_contacts c ON LOWER(c.email) = m.contact_email
+                WHERE m.segment_id = %s
+                ORDER BY c.email ASC
                 LIMIT 500
                 """,
-                (segment_id_str,),
+                (segment_id,),
             )
             members = cur.fetchall()
 
@@ -167,3 +167,22 @@ def get_segment(segment_id: UUID) -> dict:
     }
     cache.set(cache_key, result)
     return result
+
+
+@router.put("/segments/{segment_id}/name")
+def rename_segment(segment_id: UUID, body: RenameSegmentRequest) -> dict:
+    if not body.display_name.strip():
+        raise HTTPException(status_code=400, detail="display_name is required")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE analytics_segments SET display_name = %s WHERE id = %s",
+                (body.display_name.strip(), segment_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Segment not found")
+        conn.commit()
+
+    cache.invalidate_all()
+    return {"ok": True}

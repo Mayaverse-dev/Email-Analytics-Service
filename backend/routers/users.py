@@ -46,7 +46,11 @@ def list_users(
         params.append(f"%{query}%")
 
     if segment_ids:
-        where_parts.append("segment_ids && %s::text[]")
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM contact_segment_memberships m "
+            "WHERE m.contact_email = LOWER(analytics_contacts.email) "
+            "AND m.segment_id = ANY(%s::uuid[]))"
+        )
         params.append(segment_ids)
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
@@ -57,7 +61,7 @@ def list_users(
                 f"""
                 SELECT
                   id, email, first_name, last_name, unsubscribed,
-                  segment_ids, total_sent, total_delivered, total_opened,
+                  total_sent, total_delivered, total_opened,
                   total_clicked, total_bounced, total_suppressed,
                   open_rate::float8 AS open_rate, click_rate::float8 AS click_rate,
                   synced_at
@@ -99,7 +103,6 @@ def get_user(email: str) -> dict:
                   first_name,
                   last_name,
                   unsubscribed,
-                  segment_ids,
                   total_sent,
                   total_delivered,
                   total_opened,

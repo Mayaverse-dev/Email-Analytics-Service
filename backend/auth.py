@@ -12,7 +12,7 @@ def verify_maya_auth(request: Request) -> dict:
     if not settings.shared_jwt_secret:
         return {"sub": "dev", "mode": "no_auth"}
 
-    token = request.cookies.get(COOKIE_NAME)
+    token = _extract_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -22,3 +22,16 @@ def verify_maya_auth(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Session expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid authentication")
+
+
+def _extract_token(request: Request) -> str | None:
+    """Extract JWT from cookie (browser) or Authorization header (service-to-service)."""
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        return token
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
+
+    return None

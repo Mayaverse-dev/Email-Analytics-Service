@@ -116,5 +116,64 @@ class ResendClient:
                 after = str(page_data[-1]["id"])
             return items
 
+    def create_segment(self, name: str) -> dict[str, Any]:
+        """Create a new segment in Resend."""
+        self._throttle()
+        response = self._client.post("/segments", json={"name": name})
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Resend create_segment error {response.status_code}: {response.text}"
+            )
+        return response.json()
+
+    def get_segment_by_name(self, name: str) -> dict[str, Any] | None:
+        """Find a segment by name, returns None if not found."""
+        segments = self.list_segments()
+        for seg in segments:
+            if seg.get("name") == name:
+                return seg
+        return None
+
+    def create_contact(
+        self,
+        email: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        segment_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new contact in Resend, optionally assigning to segments."""
+        self._throttle()
+        body: dict[str, Any] = {"email": email}
+        if first_name:
+            body["first_name"] = first_name
+        if last_name:
+            body["last_name"] = last_name
+        if segment_ids:
+            body["segments"] = [{"id": sid} for sid in segment_ids]
+
+        response = self._client.post("/contacts", json=body)
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Resend create_contact error {response.status_code}: {response.text}"
+            )
+        return response.json()
+
+    def add_contact_to_segment(self, email: str, segment_id: str) -> dict[str, Any]:
+        """Add an existing contact to a segment by email."""
+        self._throttle()
+        response = self._client.post(f"/contacts/{email}/segments/{segment_id}")
+        if response.status_code == 404:
+            raise ContactNotFoundError(f"Contact {email} not found in Resend")
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Resend add_contact_to_segment error {response.status_code}: {response.text}"
+            )
+        return response.json()
+
     def close(self) -> None:
         self._client.close()
+
+
+class ContactNotFoundError(Exception):
+    """Raised when a contact is not found in Resend."""
+    pass

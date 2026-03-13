@@ -1,10 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Layers, Loader2, FolderOpen, FolderClosed, ChevronRight, ChevronDown, ArrowRightLeft } from "lucide-react";
-import { getSegments, getSegmentFolders, moveSegmentToFolder } from "../api/client";
+import { Layers, Loader2, FolderOpen, FolderClosed, ChevronRight, ChevronDown, ArrowRightLeft, Pencil, Check, X } from "lucide-react";
+import { getSegments, getSegmentFolders, moveSegmentToFolder, renameSegment } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
-function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onMove, allFolders }) {
+function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onMove, onRename, allFolders }) {
   const isExpanded = expandedFolders.has(folder.id);
   const folderSegments = segments.filter((s) => s.folder_id === folder.id);
   const totalContacts = folder.total_contacts || 0;
@@ -48,6 +48,7 @@ function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onM
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}
               onMove={onMove}
+              onRename={onRename}
               allFolders={allFolders}
             />
           ))}
@@ -57,6 +58,7 @@ function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onM
               segment={seg}
               depth={depth + 1}
               onMove={onMove}
+              onRename={onRename}
               allFolders={allFolders}
             />
           ))}
@@ -77,26 +79,79 @@ function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onM
   );
 }
 
-function SegmentRow({ segment, depth, onMove, allFolders }) {
+function SegmentRow({ segment, depth, onMove, onRename, allFolders }) {
   const [showMove, setShowMove] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(segment.display_name || segment.name || "");
+
+  const displayName = segment.display_name || segment.name || segment.id;
+
+  const handleRename = async () => {
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === displayName) {
+      setEditing(false);
+      return;
+    }
+    await onRename(segment.id, trimmed);
+    setEditing(false);
+  };
 
   return (
     <tr key={segment.id} className="table-row">
       <td className="table-cell">
         <div className="flex items-center gap-2" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
-          <Link to={`/segments/${segment.id}`} className="link font-medium">
-            {segment.name || segment.id}
-          </Link>
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowMove(!showMove); }}
-            className="ml-1 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100"
-            style={{ color: "var(--text-muted)" }}
-            title="Move to folder"
-            onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-            onMouseLeave={(e) => { if (!showMove) e.currentTarget.style.opacity = 0; }}
-          >
-            <ArrowRightLeft className="h-3.5 w-3.5" />
-          </button>
+          {editing ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleRename();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+                autoFocus
+                className="rounded border px-2 py-0.5 text-sm"
+                style={{
+                  borderColor: "var(--border)",
+                  backgroundColor: "var(--bg-primary)",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <button onClick={handleRename} className="rounded p-0.5" style={{ color: "var(--accent)" }}>
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setEditing(false)} className="rounded p-0.5" style={{ color: "var(--text-muted)" }}>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <Link to={`/segments/${segment.id}`} className="link font-medium">
+                {displayName}
+              </Link>
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditValue(displayName); setEditing(true); }}
+                className="ml-1 rounded p-1 opacity-0 transition-opacity hover:opacity-100"
+                style={{ color: "var(--text-muted)" }}
+                title="Rename segment"
+                onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+                onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowMove(!showMove); }}
+                className="rounded p-1 opacity-0 transition-opacity hover:opacity-100"
+                style={{ color: "var(--text-muted)" }}
+                title="Move to folder"
+                onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+                onMouseLeave={(e) => { if (!showMove) e.currentTarget.style.opacity = 0; }}
+              >
+                <ArrowRightLeft className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
           {showMove && (
             <FolderPicker
               folders={allFolders}
@@ -250,6 +305,17 @@ export default function SegmentsPage({ refreshToken = 0 }) {
     }
   };
 
+  const handleRename = async (segmentId, newName) => {
+    try {
+      await renameSegment(segmentId, newName);
+      setSegments((prev) =>
+        prev.map((s) => (s.id === segmentId ? { ...s, display_name: newName } : s))
+      );
+    } catch (err) {
+      alert("Failed to rename segment: " + err.message);
+    }
+  };
+
   const unfolderedSegments = segments.filter((s) => s.folder_id === null || s.folder_id === undefined);
 
   if (loading) {
@@ -310,6 +376,7 @@ export default function SegmentsPage({ refreshToken = 0 }) {
                   expandedFolders={expandedFolders}
                   toggleFolder={toggleFolder}
                   onMove={handleMove}
+                  onRename={handleRename}
                   allFolders={folders}
                 />
               ))}
@@ -332,6 +399,7 @@ export default function SegmentsPage({ refreshToken = 0 }) {
                       segment={seg}
                       depth={0}
                       onMove={handleMove}
+                      onRename={handleRename}
                       allFolders={folders}
                     />
                   ))}

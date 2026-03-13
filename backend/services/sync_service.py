@@ -164,42 +164,29 @@ class SyncService:
                     broadcast_upserts,
                 )
 
-            segment_upserts: list[tuple[Any, ...]] = []
+            segment_updates: list[tuple[Any, ...]] = []
             for segment in segments:
                 segment_id = _parse_uuid(segment.get("id"))
                 if not segment_id:
                     continue
-                segment_upserts.append(
+                segment_updates.append(
                     (
-                        segment_id,
                         str(segment.get("name") or ""),
                         _parse_timestamp(segment.get("created_at")),
-                        0,
+                        segment_id,
                     )
                 )
 
-            if segment_upserts:
-                cur.execute(
-                    """
-                    SELECT id FROM analytics_segment_folders
-                    WHERE name = 'To Be Tagged' AND parent_id IS NULL
-                    """
-                )
-                tbt_row = cur.fetchone()
-                tbt_folder_id = tbt_row["id"] if tbt_row else None
-
+            if segment_updates:
                 cur.executemany(
                     """
-                    INSERT INTO analytics_segments (id, name, created_at, total_contacts, folder_id, synced_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (id)
-                    DO UPDATE SET
-                        name = EXCLUDED.name,
-                        created_at = EXCLUDED.created_at,
-                        total_contacts = EXCLUDED.total_contacts,
+                    UPDATE analytics_segments
+                    SET name = %s,
+                        created_at = COALESCE(%s, created_at),
                         synced_at = NOW()
+                    WHERE id = %s
                     """,
-                    [(*row, tbt_folder_id) for row in segment_upserts],
+                    segment_updates,
                 )
 
             cur.execute(
@@ -458,7 +445,6 @@ class SyncService:
                         contact.get("first_name"),
                         contact.get("last_name"),
                         bool(contact.get("unsubscribed") or False),
-                        [],
                         metrics["total_sent"],
                         metrics["total_delivered"],
                         metrics["total_opened"],
@@ -479,7 +465,6 @@ class SyncService:
                         first_name,
                         last_name,
                         unsubscribed,
-                        segment_ids,
                         total_sent,
                         total_delivered,
                         total_opened,
@@ -492,7 +477,7 @@ class SyncService:
                         synced_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'resend', NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'resend', NOW()
                     )
                     ON CONFLICT (email, source)
                     DO UPDATE SET
@@ -500,7 +485,6 @@ class SyncService:
                         first_name = EXCLUDED.first_name,
                         last_name = EXCLUDED.last_name,
                         unsubscribed = EXCLUDED.unsubscribed,
-                        segment_ids = EXCLUDED.segment_ids,
                         total_sent = EXCLUDED.total_sent,
                         total_delivered = EXCLUDED.total_delivered,
                         total_opened = EXCLUDED.total_opened,
@@ -513,18 +497,6 @@ class SyncService:
                     """,
                     contact_rows,
                 )
-
-            cur.execute(
-                """
-                INSERT INTO analytics_segments (id, name, folder_id, synced_at)
-                SELECT DISTINCT b.segment_id, 'Unknown Segment', f.id, NOW()
-                FROM analytics_broadcasts b
-                LEFT JOIN analytics_segment_folders f
-                    ON f.name = 'To Be Tagged' AND f.parent_id IS NULL
-                WHERE b.segment_id IS NOT NULL
-                ON CONFLICT (id) DO NOTHING
-                """
-            )
 
             cur.execute(
                 """
@@ -578,42 +550,26 @@ class SyncService:
 
             cur.execute(
                 """
-                UPDATE analytics_segments s
-                SET total_contacts = sub.cnt, synced_at = NOW()
-                FROM (
-                    SELECT b.segment_id AS id,
-                           COUNT(DISTINCT LOWER(r.email_address)) AS cnt
-                    FROM analytics_broadcasts b
-                    JOIN analytics_broadcast_recipients r ON r.broadcast_id = b.id
-                    WHERE b.segment_id IS NOT NULL
-                      AND b.source = 'resend'
-                    GROUP BY b.segment_id
-                ) sub
-                WHERE s.id = sub.id
-                  AND s.source = 'resend'
+                INSERT INTO contact_segment_memberships
+                    (contact_email, segment_id, source, synced_to_resend)
+                SELECT DISTINCT LOWER(r.email_address), b.segment_id, 'broadcast', TRUE
+                FROM analytics_broadcast_recipients r
+                JOIN analytics_broadcasts b ON b.id = r.broadcast_id
+                WHERE b.segment_id IS NOT NULL AND b.source = 'resend'
+                ON CONFLICT (contact_email, segment_id) DO NOTHING
                 """
             )
 
             cur.execute(
                 """
-                UPDATE analytics_contacts c
-                SET segment_ids = (
-                    SELECT ARRAY(
-                        SELECT DISTINCT unnest
-                        FROM unnest(c.segment_ids || sub.seg_ids)
-                    )
-                )
+                UPDATE analytics_segments s
+                SET total_contacts = COALESCE(sub.cnt, 0), synced_at = NOW()
                 FROM (
-                    SELECT LOWER(r.email_address) AS email,
-                           ARRAY_AGG(DISTINCT b.segment_id::text) AS seg_ids
-                    FROM analytics_broadcast_recipients r
-                    JOIN analytics_broadcasts b ON b.id = r.broadcast_id
-                    WHERE b.segment_id IS NOT NULL
-                      AND b.source = 'resend'
-                    GROUP BY LOWER(r.email_address)
+                    SELECT segment_id, COUNT(DISTINCT contact_email) AS cnt
+                    FROM contact_segment_memberships
+                    GROUP BY segment_id
                 ) sub
-                WHERE c.email = sub.email
-                  AND c.source = 'resend'
+                WHERE s.id = sub.segment_id
                 """
             )
 
@@ -621,14 +577,69 @@ class SyncService:
 
         conn.commit()
 
+        memberships_pushed = self._push_memberships_to_resend()
+
         return {
             "events_processed": len(events),
             "broadcasts_synced": len(broadcast_upserts),
-            "segments_synced": len(segment_upserts),
+            "segments_synced": len(segment_updates),
             "contacts_synced": len(contact_rows),
             "recipients_synced": len(recipient_events),
+            "memberships_pushed": memberships_pushed,
             "last_processed_webhook_received_at": max_webhook_received_at,
         }
+
+    def _push_memberships_to_resend(self) -> int:
+        """Push unsynced segment memberships to Resend."""
+        from services.resend_client import ContactNotFoundError
+
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT contact_email, segment_id::text
+                    FROM contact_segment_memberships
+                    WHERE NOT synced_to_resend
+                    ORDER BY added_at ASC
+                """)
+                pending = cur.fetchall()
+
+        if not pending:
+            return 0
+
+        client = ResendClient()
+        pushed = 0
+        try:
+            for i, row in enumerate(pending):
+                email = row["contact_email"]
+                segment_id = row["segment_id"]
+                try:
+                    try:
+                        client.add_contact_to_segment(email, segment_id)
+                    except ContactNotFoundError:
+                        client.create_contact(email=email, segment_ids=[segment_id])
+                    pushed += 1
+
+                    with get_db() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                UPDATE contact_segment_memberships
+                                SET synced_to_resend = TRUE
+                                WHERE contact_email = %s AND segment_id = %s
+                                """,
+                                (email, segment_id),
+                            )
+                        conn.commit()
+
+                except Exception as e:
+                    print(f"WARNING: Failed to push {email} -> {segment_id}: {e}")
+
+                if (i + 1) % 50 == 0:
+                    print(f"  Pushed {i + 1}/{len(pending)} memberships to Resend")
+        finally:
+            client.close()
+
+        return pushed
 
     @staticmethod
     def _capture_snapshots(cur: Any) -> None:
@@ -649,15 +660,9 @@ class SyncService:
             SELECT s.id, COALESCE(c.cnt, 0), NOW()
             FROM analytics_segments s
             LEFT JOIN LATERAL (
-                SELECT COUNT(DISTINCT email) AS cnt FROM (
-                    SELECT email FROM analytics_contacts
-                    WHERE s.id::text = ANY(segment_ids)
-                    UNION
-                    SELECT LOWER(r.email_address)
-                    FROM analytics_broadcast_recipients r
-                    JOIN analytics_broadcasts b ON b.id = r.broadcast_id
-                    WHERE b.segment_id = s.id
-                ) combined
+                SELECT COUNT(DISTINCT contact_email) AS cnt
+                FROM contact_segment_memberships
+                WHERE segment_id = s.id
             ) c ON true
             """
         )

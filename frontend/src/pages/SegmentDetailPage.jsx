@@ -210,7 +210,7 @@ export default function SegmentDetailPage({ refreshToken = 0 }) {
             <Layers className="h-7 w-7" style={{ color: "var(--accent)" }} />
           </div>
           <div>
-            <h1 className="page-title">{segment.name || segment.id}</h1>
+            <h1 className="page-title">{segment.display_name || segment.name || segment.id}</h1>
             <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
               <Clock className="mr-1 inline h-3 w-3" />
               Created: {fmtDate(segment.created_at)}
