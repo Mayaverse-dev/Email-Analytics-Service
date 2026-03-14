@@ -666,3 +666,100 @@ class SyncService:
             ) c ON true
             """
         )
+        cur.execute(
+            """
+            WITH RECURSIVE folder_roots AS (
+                SELECT
+                  id,
+                  name,
+                  parent_id,
+                  id AS root_id,
+                  name AS root_name
+                FROM analytics_segment_folders
+                WHERE parent_id IS NULL
+
+                UNION ALL
+
+                SELECT
+                  child.id,
+                  child.name,
+                  child.parent_id,
+                  parent.root_id,
+                  parent.root_name
+                FROM analytics_segment_folders child
+                JOIN folder_roots parent ON child.parent_id = parent.id
+            )
+            INSERT INTO analytics_parent_folder_user_snapshots
+                (root_folder_id, root_folder_name, total_users, captured_at)
+            SELECT
+              fr.root_id,
+              fr.root_name,
+              COUNT(DISTINCT m.contact_email) AS total_users,
+              NOW()
+            FROM contact_segment_memberships m
+            JOIN analytics_segments s ON s.id = m.segment_id
+            JOIN folder_roots fr ON fr.id = s.folder_id
+            WHERE LOWER(fr.root_name) <> 'to be tagged'
+            GROUP BY fr.root_id, fr.root_name
+            """
+        )
+        cur.execute(
+            """
+            WITH ranked_contacts AS (
+                SELECT
+                  unsubscribed,
+                  total_sent,
+                  total_delivered,
+                  total_opened,
+                  total_clicked,
+                  total_bounced,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY LOWER(email)
+                    ORDER BY
+                      total_delivered DESC,
+                      total_sent DESC,
+                      total_opened DESC,
+                      total_clicked DESC,
+                      synced_at DESC NULLS LAST,
+                      id ASC
+                  ) AS email_rank
+                FROM analytics_contacts
+            ),
+            deduped_contacts AS (
+                SELECT
+                  unsubscribed,
+                  total_sent,
+                  total_delivered,
+                  total_opened,
+                  total_clicked,
+                  total_bounced
+                FROM ranked_contacts
+                WHERE email_rank = 1
+            )
+            INSERT INTO analytics_dashboard_metric_snapshots
+                (open_rate, click_rate, bounce_rate, unsubscribed_percentage, captured_at)
+            SELECT
+              CASE
+                WHEN COALESCE(SUM(total_delivered), 0) > 0
+                  THEN ROUND(SUM(total_opened)::numeric * 100.0 / SUM(total_delivered), 4)
+                ELSE 0
+              END AS open_rate,
+              CASE
+                WHEN COALESCE(SUM(total_delivered), 0) > 0
+                  THEN ROUND(SUM(total_clicked)::numeric * 100.0 / SUM(total_delivered), 4)
+                ELSE 0
+              END AS click_rate,
+              CASE
+                WHEN COALESCE(SUM(total_sent), 0) > 0
+                  THEN ROUND(SUM(total_bounced)::numeric * 100.0 / SUM(total_sent), 4)
+                ELSE 0
+              END AS bounce_rate,
+              CASE
+                WHEN COUNT(*) > 0
+                  THEN ROUND(COUNT(*) FILTER (WHERE unsubscribed)::numeric * 100.0 / COUNT(*), 4)
+                ELSE 0
+              END AS unsubscribed_percentage,
+              NOW()
+            FROM deduped_contacts
+            """
+        )

@@ -59,6 +59,10 @@ export function getBroadcasts(params = {}) {
   return request(`/api/broadcasts${query ? `?${query}` : ""}`);
 }
 
+export function getDashboardParentFolders() {
+  return request("/api/dashboard/parent-folders");
+}
+
 export function getBroadcast(broadcastId) {
   return request(`/api/broadcasts/${broadcastId}`);
 }

@@ -6,8 +6,7 @@ import {
   RefreshCw,
   Sun,
   Moon,
-  Loader2,
-  Mail
+  Loader2
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 
@@ -22,7 +21,6 @@ export default function Layout({
   syncing,
   onClear,
   clearing,
-  syncMessage,
   busy,
   busyLabel
 }) {
@@ -31,26 +29,24 @@ export default function Layout({
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-primary)" }}>
       <header
-        className="sticky top-0 z-40 border-b backdrop-blur-md"
+        className="sticky top-0 z-40 backdrop-blur-md"
         style={{
-          borderColor: "var(--border-color)",
           backgroundColor: theme === "dark" ? "rgba(34, 29, 30, 0.8)" : "rgba(250, 248, 218, 0.8)"
         }}
       >
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 lg:px-8">
-          <Link to="/" className="flex items-center gap-3">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "var(--accent)" }}
-            >
-              <Mail className="h-5 w-5 text-white" />
-            </div>
-            <h1
-              className="text-lg font-bold tracking-tight"
+          <Link to="/" className="flex flex-col items-center justify-center gap-2">
+            <img
+              src="/maya.webp"
+              alt="Maya"
+              className="h-12 w-auto object-contain"
+            />
+            <span
+              className="text-xs font-semibold uppercase tracking-[0.28em]"
               style={{ color: "var(--text-primary)" }}
             >
-              Maya
-            </h1>
+              Mail Analytics
+            </span>
           </Link>
 
           <div className="flex items-center gap-2">
@@ -110,18 +106,8 @@ export default function Layout({
           </div>
         </div>
 
-        {syncMessage ? (
-          <div
-            className="mx-auto w-full max-w-7xl border-t px-4 py-2 text-xs lg:px-8"
-            style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
-          >
-            {syncMessage}
-          </div>
-        ) : null}
-
         <nav
-          className="flex items-center gap-1 overflow-x-auto border-t px-4 py-2 md:hidden lg:px-8"
-          style={{ borderColor: "var(--border-color)" }}
+          className="flex items-center gap-1 overflow-x-auto px-4 py-2 md:hidden lg:px-8"
         >
           {navItems.map((item) => {
             const Icon = item.icon;

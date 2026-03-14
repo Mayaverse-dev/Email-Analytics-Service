@@ -15,18 +15,30 @@
     --border-color: #e7e6e6;
     --accent: #de0136;
     --accent-hover: #b8002d;
+    --chart-line: rgba(222, 1, 54, 0.78);
+    --chart-fill: rgba(222, 1, 54, 0.12);
+    --chart-grid: rgba(34, 29, 30, 0.14);
+    --chart-label: #504f4f;
+    --tooltip-bg: rgba(255, 255, 255, 0.96);
+    --tooltip-text: #221d1e;
   }
 
   .dark {
     --bg-primary: #221d1e;
-    --bg-secondary: #2d2829;
-    --bg-tertiary: #3d3c3c;
-    --text-primary: #faf8da;
-    --text-secondary: #d1d0d0;
-    --text-muted: #898787;
-    --border-color: #464545;
-    --accent: #de0136;
-    --accent-hover: #ea456c;
+    --bg-secondary: #1f1b1c;
+    --bg-tertiary: #3c3537;
+    --text-primary: #e6dbce;
+    --text-secondary: #c9bdae;
+    --text-muted: #b2a497;
+    --border-color: #5a5356;
+    --accent: #d62454;
+    --accent-hover: #df4f76;
+    --chart-line: rgba(255, 126, 149, 0.92);
+    --chart-fill: rgba(255, 126, 149, 0.18);
+    --chart-grid: rgba(250, 248, 218, 0.18);
+    --chart-label: #f0e7d7;
+    --tooltip-bg: rgba(47, 41, 43, 0.96);
+    --tooltip-text: #faf8da;
   }
 
   body {

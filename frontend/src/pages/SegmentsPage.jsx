@@ -4,6 +4,57 @@ import { Layers, Loader2, FolderOpen, FolderClosed, ChevronRight, ChevronDown, A
 import { getSegments, getSegmentFolders, moveSegmentToFolder, renameSegment } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
+const EXPANDED_FOLDERS_STORAGE_KEY = "segmentsPage.expandedFolders";
+
+function collectFolderIds(list) {
+  const ids = new Set();
+
+  function collect(items) {
+    for (const folder of items) {
+      ids.add(folder.id);
+      if (folder.children) collect(folder.children);
+    }
+  }
+
+  collect(list);
+  return ids;
+}
+
+function readExpandedFolderState() {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_FOLDERS_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.expanded) || !Array.isArray(parsed.known)) return null;
+
+    return {
+      expanded: new Set(parsed.expanded),
+      known: new Set(parsed.known),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeExpandedFolderState(expandedFolders, allFolderIds) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      EXPANDED_FOLDERS_STORAGE_KEY,
+      JSON.stringify({
+        expanded: [...expandedFolders],
+        known: [...allFolderIds],
+      })
+    );
+  } catch {
+    // Ignore storage failures so the page still works normally.
+  }
+}
+
 function FolderRow({ folder, segments, depth, expandedFolders, toggleFolder, onMove, onRename, allFolders }) {
   const isExpanded = expandedFolders.has(folder.id);
   const folderSegments = segments.filter((s) => s.folder_id === folder.id);
@@ -263,17 +314,24 @@ export default function SegmentsPage({ refreshToken = 0 }) {
           getSegmentFolders(),
         ]);
         if (mounted) {
-          setSegments(segRes.data || []);
-          setFolders(folderRes.folders || []);
-          const allIds = new Set();
-          function collectIds(list) {
-            for (const f of list) {
-              allIds.add(f.id);
-              if (f.children) collectIds(f.children);
+          const nextSegments = segRes.data || [];
+          const nextFolders = folderRes.folders || [];
+          const allIds = collectFolderIds(nextFolders);
+          const storedState = readExpandedFolderState();
+
+          setSegments(nextSegments);
+          setFolders(nextFolders);
+          if (!storedState) {
+            setExpandedFolders(allIds);
+          } else {
+            const nextExpandedFolders = new Set();
+            for (const folderId of allIds) {
+              if (!storedState.known.has(folderId) || storedState.expanded.has(folderId)) {
+                nextExpandedFolders.add(folderId);
+              }
             }
+            setExpandedFolders(nextExpandedFolders);
           }
-          collectIds(folderRes.folders || []);
-          setExpandedFolders(allIds);
         }
       } catch (err) {
         if (mounted) setError(err.message || "Failed to load segments");
@@ -284,6 +342,12 @@ export default function SegmentsPage({ refreshToken = 0 }) {
     load();
     return () => { mounted = false; };
   }, [refreshToken]);
+
+  useEffect(() => {
+    const allFolderIds = collectFolderIds(folders);
+    if (allFolderIds.size === 0) return;
+    writeExpandedFolderState(expandedFolders, allFolderIds);
+  }, [expandedFolders, folders]);
 
   const toggleFolder = (folderId) => {
     setExpandedFolders((prev) => {

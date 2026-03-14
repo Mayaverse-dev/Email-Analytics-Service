@@ -1,72 +1,360 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  Radio,
-  Users,
-  Layers,
-  Send,
-  MailOpen,
-  MousePointerClick,
-  Clock,
-  ArrowRight,
-  Activity,
-  Loader2
-} from "lucide-react";
-import MetricCard from "../components/MetricCard";
-import { getBroadcasts, getSegments, getSyncStatus, getUsers } from "../api/client";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, X } from "lucide-react";
+import { getDashboardParentFolders } from "../api/client";
 import { fmtDate, fmtInt, fmtPercent } from "../utils/format";
+
+const CARD_CHART_WIDTH = 360;
+const CARD_CHART_HEIGHT = 220;
+const MODAL_CHART_WIDTH = 760;
+const MODAL_CHART_HEIGHT = 320;
+
+function getHistoryValue(point) {
+  return Number(point?.value ?? point?.total_users ?? 0);
+}
+
+function formatChartValue(value, format) {
+  return format === "percent" ? fmtPercent(value) : fmtInt(value);
+}
+
+function formatAxisDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString();
+}
+
+function buildChartData(history, width, height, padding = 24) {
+  if (!history || history.length === 0) {
+    return {
+      points: [],
+      path: "",
+      areaPath: "",
+      startLabel: "",
+      endLabel: "",
+      currentValue: 0,
+      minValue: 0,
+      midValue: 0,
+      maxValue: 0,
+      padding,
+      usableHeight: Math.max(height - padding * 2, 1),
+    };
+  }
+
+  const sorted = [...history].sort(
+    (a, b) => new Date(a.captured_at).getTime() - new Date(b.captured_at).getTime()
+  );
+  const values = sorted.map((point) => getHistoryValue(point));
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+  const usableWidth = Math.max(width - padding * 2, 1);
+  const usableHeight = Math.max(height - padding * 2, 1);
+
+  const points = (sorted.length === 1 ? [sorted[0], sorted[0]] : sorted).map((point, index, arr) => {
+    const x = padding + (usableWidth * index) / Math.max(arr.length - 1, 1);
+    const normalizedY = range === 0 ? 0.5 : (getHistoryValue(point) - minValue) / range;
+    const y = padding + usableHeight - normalizedY * usableHeight;
+    return { x, y, value: getHistoryValue(point), capturedAt: point.captured_at };
+  });
+
+  const path = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const areaPath = [
+    `M ${points[0].x} ${height - padding}`,
+    ...points.map((point) => `L ${point.x} ${point.y}`),
+    `L ${points[points.length - 1].x} ${height - padding}`,
+    "Z",
+  ].join(" ");
+
+  return {
+    points,
+    path,
+    areaPath,
+    startLabel: sorted[0]?.captured_at || "",
+    endLabel: sorted[sorted.length - 1]?.captured_at || "",
+    currentValue: values[values.length - 1] || 0,
+    minValue,
+    midValue: minValue + range / 2,
+    maxValue,
+    padding,
+    usableHeight,
+  };
+}
+
+function TrendChart({ history, width, height, compact = false, format = "integer", showAxes = false }) {
+  const padding = showAxes ? 52 : compact ? 18 : 24;
+  const chart = useMemo(
+    () => buildChartData(history, width, height, padding),
+    [height, history, padding, width]
+  );
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+
+  useEffect(() => {
+    setHoveredIndex(chart.points.length > 0 ? chart.points.length - 1 : null);
+  }, [chart.endLabel, chart.points.length]);
+
+  if (chart.points.length === 0) {
+    return null;
+  }
+
+  const hoveredPoint = hoveredIndex === null ? null : chart.points[hoveredIndex] || null;
+  const gridLineYs = [
+    chart.padding,
+    chart.padding + chart.usableHeight / 2,
+    height - chart.padding,
+  ];
+
+  function handlePointerMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+
+    const relativeX = ((event.clientX - rect.left) / rect.width) * width;
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+
+    chart.points.forEach((point, index) => {
+      const distance = Math.abs(point.x - relativeX);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    setHoveredIndex(nearestIndex);
+  }
+
+  return (
+    <div className="relative h-full w-full">
+      {showAxes && hoveredPoint ? (
+        <div
+          className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border px-3 py-2 text-xs shadow-lg"
+          style={{
+            backgroundColor: "var(--tooltip-bg)",
+            borderColor: "var(--border-color)",
+            color: "var(--tooltip-text)",
+          }}
+        >
+          <p className="font-semibold">{formatChartValue(hoveredPoint.value, format)}</p>
+          <p style={{ color: "var(--chart-label)" }}>{fmtDate(hoveredPoint.capturedAt)}</p>
+        </div>
+      ) : null}
+
+      {showAxes ? (
+        <div
+          className="pointer-events-none absolute inset-y-4 left-3 z-10 flex flex-col justify-between text-xs font-medium"
+          style={{ color: "var(--chart-label)" }}
+        >
+          <span>{formatChartValue(chart.maxValue, format)}</span>
+          <span>{formatChartValue(chart.midValue, format)}</span>
+          <span>{formatChartValue(chart.minValue, format)}</span>
+        </div>
+      ) : null}
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-full w-full"
+        aria-hidden="true"
+        preserveAspectRatio="none"
+        onMouseMove={showAxes ? handlePointerMove : undefined}
+        onMouseLeave={showAxes ? () => setHoveredIndex(chart.points.length - 1) : undefined}
+      >
+        {showAxes ? (
+          <>
+            {gridLineYs.map((y) => (
+              <line
+                key={y}
+                x1={chart.padding}
+                y1={y}
+                x2={width - chart.padding}
+                y2={y}
+                stroke="var(--chart-grid)"
+                strokeDasharray="6 8"
+                strokeWidth="1"
+              />
+            ))}
+          </>
+        ) : null}
+        <path d={chart.areaPath} fill="var(--chart-fill)" />
+        <polyline
+          fill="none"
+          stroke="var(--chart-line)"
+          strokeWidth={compact ? 4 : 4}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={chart.path}
+        />
+        {hoveredPoint ? (
+          <>
+            {showAxes ? (
+              <line
+                x1={hoveredPoint.x}
+                y1={chart.padding}
+                x2={hoveredPoint.x}
+                y2={height - chart.padding}
+                stroke="var(--chart-grid)"
+                strokeWidth="1.5"
+                strokeDasharray="4 6"
+              />
+            ) : null}
+            <circle
+              cx={hoveredPoint.x}
+              cy={hoveredPoint.y}
+              r={compact ? 4.5 : 5}
+              fill="var(--chart-line)"
+            />
+          </>
+        ) : null}
+      </svg>
+    </div>
+  );
+}
+
+function GraphModal({ item, onClose }) {
+  if (!item) return null;
+
+  return (
+    <div
+      className="fixed left-1/2 top-1/2 z-50 w-[min(920px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-3xl border shadow-2xl"
+      style={{
+        backgroundColor: "var(--bg-primary)",
+        borderColor: "var(--border-color)",
+      }}
+    >
+      <div
+        className="flex items-start justify-between gap-4 border-b px-6 py-5"
+        style={{ borderColor: "var(--border-color)" }}
+      >
+        <div>
+          <div className="flex flex-col gap-1">
+            <h2 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+              {item.title}
+            </h2>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              {item.description}
+            </p>
+          </div>
+        </div>
+        <button onClick={onClose} className="btn-ghost p-1.5">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-6 px-6 py-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              {item.valueLabel}
+            </p>
+            <p className="text-5xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
+              {item.displayValue}
+            </p>
+          </div>
+          <div className="text-sm" style={{ color: "var(--text-muted)" }}>
+            {item.history?.length > 0
+              ? `Latest snapshot: ${fmtDate(item.history[item.history.length - 1].captured_at)}`
+              : "No snapshot data"}
+          </div>
+        </div>
+
+        <div
+          className="rounded-2xl border p-4"
+          style={{
+            borderColor: "var(--border-color)",
+            backgroundColor: "var(--bg-secondary)",
+          }}
+        >
+          <div className="h-80 w-full">
+            <TrendChart
+              history={item.history || []}
+              width={MODAL_CHART_WIDTH}
+              height={MODAL_CHART_HEIGHT}
+              format={item.format}
+              showAxes
+            />
+          </div>
+          <div className="mt-4 flex items-center justify-between text-xs" style={{ color: "var(--chart-label)" }}>
+            <span>{item.history?.[0]?.captured_at ? formatAxisDate(item.history[0].captured_at) : "Start"}</span>
+            <span>
+              {item.history?.length ? formatAxisDate(item.history[item.history.length - 1].captured_at) : "Now"}
+            </span>
+          </div>
+        </div>
+
+        {(item.history || []).length < 2 ? (
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Only one snapshot is available so far. More history will appear after future syncs.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DashboardCard({ label, value, history, format = "integer", onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex h-full flex-col gap-4 text-left"
+    >
+      <div
+        className="relative flex min-h-[220px] flex-1 items-end overflow-hidden rounded-[28px] border p-6 transition-all duration-200 group-hover:-translate-y-1 group-hover:shadow-lg"
+        style={{
+          borderColor: "var(--border-color)",
+          backgroundColor: "var(--bg-primary)",
+          boxShadow: "0 12px 32px rgba(0, 0, 0, 0.06)",
+        }}
+      >
+        <div className="absolute inset-0">
+          <TrendChart
+            history={history || []}
+            width={CARD_CHART_WIDTH}
+            height={CARD_CHART_HEIGHT}
+            compact
+            format={format}
+          />
+        </div>
+        <div className="relative z-10 pb-2">
+          <p
+            className={`${format === "percent" ? "text-5xl" : "text-6xl"} font-semibold tracking-tight`}
+            style={{ color: "var(--text-primary)" }}
+          >
+            {formatChartValue(value, format)}
+          </p>
+        </div>
+      </div>
+      <div className="flex min-h-[72px] items-start">
+        <p className="text-3xl font-medium leading-tight" style={{ color: "var(--text-primary)" }}>
+          {label}
+        </p>
+      </div>
+    </button>
+  );
+}
 
 export default function DashboardPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [stats, setStats] = useState({
-    broadcasts: [],
-    totalBroadcasts: 0,
-    totalUsers: 0,
-    totalSegments: 0,
-    delivered: 0,
-    opened: 0,
-    clicked: 0,
-    syncStatus: null
-  });
+  const [parentFolders, setParentFolders] = useState([]);
+  const [overallMetrics, setOverallMetrics] = useState([]);
+  const [selectedCard, setSelectedCard] = useState(null);
 
   useEffect(() => {
     let mounted = true;
+
     async function load() {
       try {
         setLoading(true);
-        const [broadcastsRes, usersRes, segmentsRes, syncStatusRes] = await Promise.all([
-          getBroadcasts({ limit: 100, offset: 0 }),
-          getUsers({ limit: 1, offset: 0 }),
-          getSegments({ limit: 1, offset: 0 }),
-          getSyncStatus()
-        ]);
-
+        const response = await getDashboardParentFolders();
         if (!mounted) return;
-        const delivered = broadcastsRes.data.reduce((acc, item) => acc + Number(item.total_delivered || 0), 0);
-        const opened = broadcastsRes.data.reduce((acc, item) => acc + Number(item.total_opened || 0), 0);
-        const clicked = broadcastsRes.data.reduce((acc, item) => acc + Number(item.total_clicked || 0), 0);
-
-        setStats({
-          broadcasts: broadcastsRes.data,
-          totalBroadcasts: Number(broadcastsRes.total || 0),
-          totalUsers: Number(usersRes.total || 0),
-          totalSegments: Number(segmentsRes.total || 0),
-          delivered,
-          opened,
-          clicked,
-          syncStatus: syncStatusRes
-        });
+        setParentFolders(response.parent_folders || []);
+        setOverallMetrics(response.overall_metrics || []);
       } catch (err) {
-        if (mounted) {
-          setError(err.message || "Failed to load dashboard");
-        }
+        if (mounted) setError(err.message || "Failed to load dashboard");
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
     }
+
     load();
     return () => {
       mounted = false;
@@ -89,159 +377,83 @@ export default function DashboardPage({ refreshToken = 0 }) {
     );
   }
 
-  const openRate = stats.delivered ? (stats.opened / stats.delivered) * 100 : 0;
-  const clickRate = stats.delivered ? (stats.clicked / stats.delivered) * 100 : 0;
-
   return (
-    <div className="space-y-8">
-      <div>
+    <div className="flex flex-col gap-10">
+      <div className="flex flex-col gap-1">
         <h1 className="page-title">Dashboard</h1>
-        <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-          Overview of your email analytics
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+          Parent-folder audience overview. Click a card to open its graph.
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <MetricCard label="Broadcasts" value={fmtInt(stats.totalBroadcasts)} icon={Radio} />
-        <MetricCard label="Users" value={fmtInt(stats.totalUsers)} icon={Users} />
-        <MetricCard label="Segments" value={fmtInt(stats.totalSegments)} icon={Layers} />
-        <MetricCard label="Delivered" value={fmtInt(stats.delivered)} icon={Send} />
-        <MetricCard label="Open Rate" value={fmtPercent(openRate)} icon={MailOpen} />
-        <MetricCard label="Click Rate" value={fmtPercent(clickRate)} icon={MousePointerClick} />
+      {parentFolders.length === 0 ? (
+        <div className="card">
+          <p style={{ color: "var(--text-muted)" }}>
+            No parent-folder data available yet.
+          </p>
+        </div>
+      ) : (
+        <div className="grid auto-rows-fr gap-8 sm:grid-cols-2 xl:grid-cols-3">
+          {parentFolders.map((folder) => (
+            <DashboardCard
+              key={folder.id}
+              label={folder.name}
+              value={folder.total_users}
+              history={folder.history || []}
+              onClick={() => setSelectedCard({
+                title: folder.name,
+                description: "Deduplicated users over time",
+                valueLabel: "Current Count",
+                displayValue: fmtInt(folder.total_users),
+                format: "integer",
+                history: folder.history || [],
+              })}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="section-title">All Users</h2>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Deduplicated engagement and list-health metrics across all users. Click a card to open its graph.
+          </p>
+        </div>
+
+        <div className="grid auto-rows-fr gap-8 sm:grid-cols-2 xl:grid-cols-4">
+          {overallMetrics.map((metric) => (
+            <DashboardCard
+              key={metric.key}
+              label={metric.label}
+              value={metric.value}
+              history={metric.history || []}
+              format="percent"
+              onClick={() => setSelectedCard({
+                title: metric.label,
+                description: "All-user percentage over time",
+                valueLabel: "Current Value",
+                displayValue: fmtPercent(metric.value),
+                format: "percent",
+                history: metric.history || [],
+              })}
+            />
+          ))}
+        </div>
       </div>
 
-      <div className="card">
-        <div className="flex items-center gap-3">
+      {selectedCard && (
+        <>
           <div
-            className="flex h-10 w-10 items-center justify-center rounded-lg"
-            style={{ backgroundColor: "var(--bg-tertiary)" }}
-          >
-            <Activity className="h-5 w-5" style={{ color: "var(--accent)" }} />
-          </div>
-          <div>
-            <h2 className="section-title">Last Sync</h2>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Synchronization status
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.syncStatus?.status === "never_synced" ? (
-            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-              No sync has run yet.
-            </p>
-          ) : (
-            <>
-              <div>
-                <p className="text-xs font-medium uppercase" style={{ color: "var(--text-muted)" }}>
-                  Status
-                </p>
-                <p className="mt-1 font-semibold" style={{ color: "var(--text-primary)" }}>
-                  <span
-                    className={`badge ${
-                      stats.syncStatus?.status === "completed" ? "badge-success" : "badge-warning"
-                    }`}
-                  >
-                    {stats.syncStatus?.status || "-"}
-                  </span>
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase" style={{ color: "var(--text-muted)" }}>
-                  Started
-                </p>
-                <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-                  {fmtDate(stats.syncStatus?.started_at)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase" style={{ color: "var(--text-muted)" }}>
-                  Completed
-                </p>
-                <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-                  {fmtDate(stats.syncStatus?.completed_at)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase" style={{ color: "var(--text-muted)" }}>
-                  Events Processed
-                </p>
-                <p className="mt-1 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {fmtInt(stats.syncStatus?.events_processed || 0)}
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "var(--bg-tertiary)" }}
-            >
-              <Radio className="h-5 w-5" style={{ color: "var(--accent)" }} />
-            </div>
-            <div>
-              <h2 className="section-title">Recent Broadcasts</h2>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Latest email campaigns
-              </p>
-            </div>
-          </div>
-          <Link to="/broadcasts" className="btn-ghost group">
-            View all
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-          </Link>
-        </div>
-
-        <div className="table-container mt-4">
-          <table className="min-w-full">
-            <thead className="table-header">
-              <tr>
-                <th>Name</th>
-                <th>Subject</th>
-                <th>Delivered</th>
-                <th>Open Rate</th>
-                <th>Click Rate</th>
-                <th>Sent At</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.broadcasts.slice(0, 10).map((broadcast) => (
-                <tr key={broadcast.id} className="table-row">
-                  <td className="table-cell">
-                    <Link to={`/broadcasts/${broadcast.id}`} className="link">
-                      {broadcast.name || broadcast.id}
-                    </Link>
-                  </td>
-                  <td className="table-cell">{broadcast.subject || "-"}</td>
-                  <td className="table-cell font-medium" style={{ color: "var(--text-primary)" }}>
-                    {fmtInt(broadcast.total_delivered)}
-                  </td>
-                  <td className="table-cell">{fmtPercent(broadcast.open_rate)}</td>
-                  <td className="table-cell">{fmtPercent(broadcast.click_rate)}</td>
-                  <td className="table-cell">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5" style={{ color: "var(--text-muted)" }} />
-                      {fmtDate(broadcast.sent_at || broadcast.created_at)}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {stats.broadcasts.length === 0 ? (
-                <tr>
-                  <td className="table-cell py-8 text-center" style={{ color: "var(--text-muted)" }} colSpan={6}>
-                    No broadcasts yet.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setSelectedCard(null)}
+          />
+          <GraphModal
+            item={selectedCard}
+            onClose={() => setSelectedCard(null)}
+          />
+        </>
+      )}
     </div>
   );
 }
