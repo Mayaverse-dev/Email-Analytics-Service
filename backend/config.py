@@ -24,6 +24,7 @@ class Settings:
         self.request_timeout_seconds = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
         self.shared_jwt_secret = os.getenv("SHARED_JWT_SECRET", "").strip()
         self.portal_url = os.getenv("PORTAL_URL", "https://portal.entermaya.com").strip()
+        self.webhook_secret = os.getenv("WEBHOOK_SECRET", "").strip()
         self.frontend_dist_dir = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 

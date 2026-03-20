@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Optional
 from uuid import UUID
 
@@ -17,21 +19,9 @@ BUYER_ROOT_FOLDER_NAMES = ["kickstarter"]
 BUYER_EXCLUDED_SEGMENT_NAME = "dropped backers latest"
 EXCLUDED_PARENT_FOLDER_NAME = "to be tagged"
 
-
-def _parse_uuid_query(value: Optional[str], field_name: str) -> list[str]:
-    if not value:
-        return []
-
-    parsed: set[str] = set()
-    for part in value.split(","):
-        token = part.strip()
-        if not token:
-            continue
-        try:
-            parsed.add(str(UUID(token)))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid {field_name}") from exc
-    return sorted(parsed)
+ALLOWED_SLOT_MODES = {"any", "all"}
+ALLOWED_SLOT_CONNECTORS = {"union", "intersect", "exclude"}
+MAX_SLOTS = 20
 
 
 def _parse_int_query(value: Optional[str], field_name: str) -> list[int]:
@@ -50,6 +40,107 @@ def _parse_int_query(value: Optional[str], field_name: str) -> list[int]:
     return sorted(parsed)
 
 
+def _parse_slots(raw: Optional[str]) -> list[dict] | None:
+    if not raw or not raw.strip():
+        return None
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid slots JSON") from exc
+
+    if not isinstance(data, list) or len(data) == 0:
+        raise HTTPException(status_code=400, detail="slots must be a non-empty array")
+
+    if len(data) > MAX_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Too many slots (max {MAX_SLOTS})")
+
+    validated: list[dict] = []
+    for index, slot in enumerate(data):
+        if not isinstance(slot, dict):
+            raise HTTPException(status_code=400, detail=f"Slot {index} must be an object")
+
+        mode = slot.get("mode", "any")
+        if mode not in ALLOWED_SLOT_MODES:
+            raise HTTPException(status_code=400, detail=f"Slot {index}: mode must be 'any' or 'all'")
+
+        raw_ids = slot.get("segment_ids", [])
+        if not isinstance(raw_ids, list) or len(raw_ids) == 0:
+            raise HTTPException(status_code=400, detail=f"Slot {index}: segment_ids must be a non-empty array")
+
+        segment_ids: list[str] = []
+        for sid in raw_ids:
+            try:
+                segment_ids.append(str(UUID(str(sid))))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Slot {index}: invalid segment_id '{sid}'") from exc
+
+        entry: dict = {"mode": mode, "segment_ids": sorted(set(segment_ids))}
+
+        if index == 0:
+            entry["connector"] = None
+        else:
+            connector = slot.get("connector", "union")
+            if connector not in ALLOWED_SLOT_CONNECTORS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Slot {index}: connector must be 'union', 'intersect', or 'exclude'",
+                )
+            entry["connector"] = connector
+
+        validated.append(entry)
+
+    return validated
+
+
+def _build_slots_cte(slots: list[dict]) -> tuple[str, list]:
+    cte_parts: list[str] = []
+    params: list = []
+
+    for index, slot in enumerate(slots):
+        if slot["mode"] == "any":
+            cte_parts.append(
+                f"slot_{index}_emails AS ("
+                "SELECT DISTINCT contact_email "
+                "FROM contact_segment_memberships "
+                "WHERE segment_id = ANY(%s::uuid[])"
+                ")"
+            )
+            params.append(slot["segment_ids"])
+        else:
+            cte_parts.append(
+                f"slot_{index}_emails AS ("
+                "SELECT contact_email "
+                "FROM contact_segment_memberships "
+                "WHERE segment_id = ANY(%s::uuid[]) "
+                "GROUP BY contact_email "
+                "HAVING COUNT(DISTINCT segment_id) = %s"
+                ")"
+            )
+            params.append(slot["segment_ids"])
+            params.append(len(slot["segment_ids"]))
+
+    connector_map = {"union": "UNION", "intersect": "INTERSECT", "exclude": "EXCEPT"}
+
+    for index in range(len(slots)):
+        if index == 0:
+            cte_parts.append(
+                f"combined_{index} AS (SELECT contact_email FROM slot_0_emails)"
+            )
+        else:
+            sql_op = connector_map[slots[index]["connector"]]
+            cte_parts.append(
+                f"combined_{index} AS ("
+                f"SELECT contact_email FROM combined_{index - 1} "
+                f"{sql_op} "
+                f"SELECT contact_email FROM slot_{index}_emails"
+                ")"
+            )
+
+    last_combined = f"combined_{len(slots) - 1}"
+    return ", ".join(cte_parts), params, last_combined
+
+
 @router.get("/users")
 def list_users(
     limit: int = Query(default=100, ge=1, le=1000),
@@ -57,11 +148,7 @@ def list_users(
     q: str = Query(default=""),
     sort: str = Query(default="total_delivered"),
     order: str = Query(default="desc"),
-    segments: Optional[str] = Query(default=None),
-    include_segments: Optional[str] = Query(default=None),
-    exclude_segments: Optional[str] = Query(default=None),
-    include_folders: Optional[str] = Query(default=None),
-    exclude_folders: Optional[str] = Query(default=None),
+    slots: Optional[str] = Query(default=None),
     root_folder_ids: Optional[str] = Query(default=None),
     parent_only: bool = Query(default=False),
 ) -> dict:
@@ -69,29 +156,13 @@ def list_users(
     sort_field = sort if sort in ALLOWED_SORT_FIELDS else "total_delivered"
     sort_order = order if order in ALLOWED_SORT_ORDERS else "desc"
 
-    segment_ids = _parse_uuid_query(segments, "segments")
-    include_segment_ids = _parse_uuid_query(include_segments, "include_segments")
-    exclude_segment_ids = _parse_uuid_query(exclude_segments, "exclude_segments")
-    include_folder_ids = _parse_int_query(include_folders, "include_folders")
-    exclude_folder_ids = _parse_int_query(exclude_folders, "exclude_folders")
+    parsed_slots = _parse_slots(slots)
     selected_root_folder_ids = _parse_int_query(root_folder_ids, "root_folder_ids")
-    formula_active = any([
-        include_segment_ids,
-        exclude_segment_ids,
-        include_folder_ids,
-        exclude_folder_ids,
-    ])
 
-    if formula_active and not (include_segment_ids or include_folder_ids):
-        raise HTTPException(status_code=400, detail="Formula must include at least one segment or folder")
-
+    slots_hash = hashlib.md5(slots.encode()).hexdigest() if slots else ""
     cache_key = (
         f"/users?limit={limit}&offset={offset}&q={query}&sort={sort_field}&order={sort_order}"
-        f"&segments={','.join(sorted(segment_ids))}"
-        f"&include_segments={','.join(include_segment_ids)}"
-        f"&exclude_segments={','.join(exclude_segment_ids)}"
-        f"&include_folders={','.join(str(fid) for fid in include_folder_ids)}"
-        f"&exclude_folders={','.join(str(fid) for fid in exclude_folder_ids)}"
+        f"&slots={slots_hash}"
         f"&root_folder_ids={','.join(str(fid) for fid in selected_root_folder_ids)}"
         f"&parent_only={str(parent_only).lower()}"
     )
@@ -100,7 +171,8 @@ def list_users(
         return cached
 
     order_clause = f"{sort_field} {sort_order}, email ASC"
-    folder_filters_cte = """
+
+    folder_roots_cte = """
                 WITH RECURSIVE folder_roots AS (
                     SELECT
                       id,
@@ -125,22 +197,16 @@ def list_users(
                       parent.root_sort_order
                     FROM analytics_segment_folders child
                     JOIN folder_roots parent ON child.parent_id = parent.id
-                ),
-                folder_descendants AS (
-                    SELECT
-                      id AS ancestor_id,
-                      id AS descendant_id
-                    FROM analytics_segment_folders
-
-                    UNION ALL
-
-                    SELECT
-                      parent.ancestor_id,
-                      child.id AS descendant_id
-                    FROM folder_descendants parent
-                    JOIN analytics_segment_folders child ON child.parent_id = parent.descendant_id
                 )
     """
+
+    slots_cte_sql = ""
+    slots_params: list = []
+    slots_combined_name = ""
+
+    if parsed_slots:
+        slots_cte_parts, slots_params, slots_combined_name = _build_slots_cte(parsed_slots)
+        slots_cte_sql = ", " + slots_cte_parts
 
     where_parts: list[str] = []
     params: list = []
@@ -149,98 +215,45 @@ def list_users(
         where_parts.append("LOWER(c.email) LIKE %s")
         params.append(f"%{query}%")
 
-    if formula_active:
-        include_parts: list[str] = []
-        exclude_parts: list[str] = []
+    if parsed_slots:
+        where_parts.append(
+            f"LOWER(c.email) IN (SELECT contact_email FROM {slots_combined_name})"
+        )
 
-        if include_segment_ids:
-            include_parts.append(
-                "EXISTS (SELECT 1 FROM contact_segment_memberships m "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND m.segment_id = ANY(%s::uuid[]))"
-            )
-            params.append(include_segment_ids)
-
-        if include_folder_ids:
-            include_parts.append(
-                "EXISTS ("
-                "SELECT 1 "
-                "FROM contact_segment_memberships m "
-                "JOIN analytics_segments s ON s.id = m.segment_id "
-                "JOIN folder_descendants fd_filter ON fd_filter.descendant_id = s.folder_id "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND fd_filter.ancestor_id = ANY(%s::int[])"
-                ")"
-            )
-            params.append(include_folder_ids)
-
-        if include_parts:
-            where_parts.append(f"({' OR '.join(include_parts)})")
-
-        if exclude_segment_ids:
-            exclude_parts.append(
-                "EXISTS (SELECT 1 FROM contact_segment_memberships m "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND m.segment_id = ANY(%s::uuid[]))"
-            )
-            params.append(exclude_segment_ids)
-
-        if exclude_folder_ids:
-            exclude_parts.append(
-                "EXISTS ("
-                "SELECT 1 "
-                "FROM contact_segment_memberships m "
-                "JOIN analytics_segments s ON s.id = m.segment_id "
-                "JOIN folder_descendants fd_filter ON fd_filter.descendant_id = s.folder_id "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND fd_filter.ancestor_id = ANY(%s::int[])"
-                ")"
-            )
-            params.append(exclude_folder_ids)
-
-        if exclude_parts:
-            where_parts.append(f"NOT ({' OR '.join(exclude_parts)})")
-    else:
-        if segment_ids:
-            where_parts.append(
-                "EXISTS (SELECT 1 FROM contact_segment_memberships m "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND m.segment_id = ANY(%s::uuid[]))"
-            )
-            params.append(segment_ids)
-
-        if selected_root_folder_ids:
-            where_parts.append(
-                "EXISTS ("
-                "SELECT 1 "
-                "FROM contact_segment_memberships m "
-                "JOIN analytics_segments s ON s.id = m.segment_id "
-                "JOIN folder_roots fr_filter ON fr_filter.id = s.folder_id "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND fr_filter.root_id = ANY(%s::int[])"
-                ")"
-            )
-            params.append(selected_root_folder_ids)
-        elif parent_only:
-            where_parts.append(
-                "EXISTS ("
-                "SELECT 1 "
-                "FROM contact_segment_memberships m "
-                "JOIN analytics_segments s ON s.id = m.segment_id "
-                "JOIN folder_roots fr_filter ON fr_filter.id = s.folder_id "
-                "WHERE m.contact_email = LOWER(c.email) "
-                "AND LOWER(fr_filter.root_name) <> %s"
-                ")"
-            )
-            params.append(EXCLUDED_PARENT_FOLDER_NAME)
+    if selected_root_folder_ids:
+        where_parts.append(
+            "EXISTS ("
+            "SELECT 1 "
+            "FROM contact_segment_memberships m "
+            "JOIN analytics_segments s ON s.id = m.segment_id "
+            "JOIN folder_roots fr_filter ON fr_filter.id = s.folder_id "
+            "WHERE m.contact_email = LOWER(c.email) "
+            "AND fr_filter.root_id = ANY(%s::int[])"
+            ")"
+        )
+        params.append(selected_root_folder_ids)
+    elif parent_only and not parsed_slots:
+        where_parts.append(
+            "EXISTS ("
+            "SELECT 1 "
+            "FROM contact_segment_memberships m "
+            "JOIN analytics_segments s ON s.id = m.segment_id "
+            "JOIN folder_roots fr_filter ON fr_filter.id = s.folder_id "
+            "WHERE m.contact_email = LOWER(c.email) "
+            "AND LOWER(fr_filter.root_name) <> %s"
+            ")"
+        )
+        params.append(EXCLUDED_PARENT_FOLDER_NAME)
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    all_params = (*slots_params, *params)
 
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                {folder_filters_cte},
+                {folder_roots_cte}
+                {slots_cte_sql},
                 ranked_contacts AS (
                     SELECT
                       c.id,
@@ -350,7 +363,7 @@ def list_users(
                 ORDER BY {order_clause}
                 """,
                 (
-                    *params,
+                    *all_params,
                     limit,
                     offset,
                     BUYER_ROOT_FOLDER_NAMES,
@@ -362,18 +375,19 @@ def list_users(
 
             cur.execute(
                 f"""
-                {folder_filters_cte}
+                {folder_roots_cte}
+                {slots_cte_sql}
                 SELECT COUNT(DISTINCT LOWER(c.email)) AS count
                 FROM analytics_contacts c
                 {where_clause}
                 """,
-                tuple(params),
+                tuple(all_params),
             )
             total = cur.fetchone()["count"]
 
             cur.execute(
                 f"""
-                {folder_filters_cte}
+                {folder_roots_cte}
                 SELECT COUNT(DISTINCT m.contact_email) AS count
                 FROM contact_segment_memberships m
                 JOIN analytics_segments s ON s.id = m.segment_id
@@ -386,7 +400,7 @@ def list_users(
 
             cur.execute(
                 f"""
-                {folder_filters_cte},
+                {folder_roots_cte},
                 root_counts AS (
                     SELECT
                       fr.root_id,

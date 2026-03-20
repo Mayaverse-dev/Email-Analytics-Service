@@ -1,3 +1,12 @@
-from . import broadcasts, segments, sync, users
+from . import broadcasts, contacts, dashboard, segment_folders, segments, sync, users, webhooks
 
-__all__ = ["broadcasts", "segments", "sync", "users"]
+__all__ = [
+    "broadcasts",
+    "contacts",
+    "dashboard",
+    "segment_folders",
+    "segments",
+    "sync",
+    "users",
+    "webhooks",
+]
