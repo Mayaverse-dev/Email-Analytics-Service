@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from cache import cache
@@ -24,12 +24,14 @@ class FramerEmailPayload(BaseModel):
 @router.post("/webhooks/framer-email")
 def framer_email_webhook(
     body: FramerEmailPayload,
-    token: str = Query(...),
+    token: Optional[str] = Query(default=None),
+    x_webhook_token: Optional[str] = Header(default=None),
 ) -> dict:
     if not settings.webhook_secret:
         raise HTTPException(status_code=503, detail="Webhook not configured")
 
-    if not secrets.compare_digest(token, settings.webhook_secret):
+    provided_token = x_webhook_token or token or ""
+    if not provided_token or not secrets.compare_digest(provided_token, settings.webhook_secret):
         raise HTTPException(status_code=403, detail="Invalid token")
 
     email = body.email.strip().lower()
