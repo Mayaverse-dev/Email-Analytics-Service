@@ -43,8 +43,29 @@ const MODE_OPTIONS = [
   { value: "all", label: "ALL of" },
 ];
 
+const FILTER_STORAGE_KEY = "users-page-filter-state";
+
 function makeEmptySlot() {
   return { mode: "any", segmentIds: [], connector: "union" };
+}
+
+function loadFilterState() {
+  try {
+    const raw = window.localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveFilterState(slots, appliedSlots, rootFolderIds) {
+  try {
+    window.localStorage.setItem(
+      FILTER_STORAGE_KEY,
+      JSON.stringify({ slots, appliedSlots, rootFolderIds }),
+    );
+  } catch { /* quota exceeded or private browsing */ }
 }
 
 function SortIcon({ column, sortField, sortOrder }) {
@@ -517,12 +538,23 @@ export default function UsersPage({ refreshToken = 0 }) {
   const [page, setPage] = useState(0);
   const [sortField, setSortField] = useState("total_delivered");
   const [sortOrder, setSortOrder] = useState("desc");
-  const [selectedRootFolderIds, setSelectedRootFolderIds] = useState([]);
+  const savedFilter = useMemo(() => loadFilterState(), []);
+  const [selectedRootFolderIds, setSelectedRootFolderIds] = useState(
+    () => savedFilter?.rootFolderIds || [],
+  );
   const [selectedUserEmail, setSelectedUserEmail] = useState("");
 
-  const [slots, setSlots] = useState([makeEmptySlot()]);
-  const [appliedSlots, setAppliedSlots] = useState(null);
+  const [slots, setSlots] = useState(
+    () => savedFilter?.slots?.length ? savedFilter.slots : [makeEmptySlot()],
+  );
+  const [appliedSlots, setAppliedSlots] = useState(
+    () => savedFilter?.appliedSlots || null,
+  );
   const [slotError, setSlotError] = useState("");
+
+  useEffect(() => {
+    saveFilterState(slots, appliedSlots, selectedRootFolderIds);
+  }, [slots, appliedSlots, selectedRootFolderIds]);
 
   useEffect(() => {
     let cancelled = false;
