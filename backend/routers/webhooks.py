@@ -15,6 +15,10 @@ router = APIRouter()
 FRAMER_SEGMENT_ID = "7a4912b3-8740-4b0e-b7f1-8cddc59fb310"
 
 
+def _get_webhook_secret() -> str:
+    return settings.webhook_secret or settings.shared_jwt_secret
+
+
 class FramerEmailPayload(BaseModel):
     email: str
     first_name: Optional[str] = None
@@ -27,11 +31,12 @@ def framer_email_webhook(
     token: Optional[str] = Query(default=None),
     x_webhook_token: Optional[str] = Header(default=None),
 ) -> dict:
-    if not settings.webhook_secret:
+    expected = _get_webhook_secret()
+    if not expected:
         raise HTTPException(status_code=503, detail="Webhook not configured")
 
     provided_token = x_webhook_token or token or ""
-    if not provided_token or not secrets.compare_digest(provided_token, settings.webhook_secret):
+    if not provided_token or not secrets.compare_digest(provided_token, expected):
         raise HTTPException(status_code=403, detail="Invalid token")
 
     email = body.email.strip().lower()
