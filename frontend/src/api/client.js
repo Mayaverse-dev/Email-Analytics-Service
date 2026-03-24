@@ -107,3 +107,10 @@ export function renameSegment(segmentId, displayName) {
     body: JSON.stringify({ display_name: displayName }),
   });
 }
+
+export function importCsvToSegment(payload) {
+  return request("/api/segments/import", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

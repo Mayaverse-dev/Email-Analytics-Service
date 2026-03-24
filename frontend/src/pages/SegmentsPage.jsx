@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { Layers, Loader2, FolderOpen, FolderClosed, ChevronRight, ChevronDown, ArrowRightLeft, Pencil, Check, X } from "lucide-react";
-import { getSegments, getSegmentFolders, moveSegmentToFolder, renameSegment } from "../api/client";
+import { Layers, Loader2, FolderOpen, FolderClosed, ChevronRight, ChevronDown, ArrowRightLeft, Pencil, Check, X, Upload, Search, AlertCircle, CheckCircle2 } from "lucide-react";
+import { getSegments, getSegmentFolders, moveSegmentToFolder, renameSegment, importCsvToSegment } from "../api/client";
 import { fmtInt, fmtPercent } from "../utils/format";
 
 const EXPANDED_FOLDERS_STORAGE_KEY = "segmentsPage.expandedFolders";
@@ -297,12 +297,472 @@ function FolderPicker({ folders, currentFolderId, onSelect, onClose }) {
   );
 }
 
+const EMAIL_PATTERNS = ["email", "e-mail", "email_address", "emailaddress", "mail"];
+const FIRST_NAME_PATTERNS = ["first_name", "firstname", "first name", "fname", "given_name"];
+const LAST_NAME_PATTERNS = ["last_name", "lastname", "last name", "lname", "surname", "family_name"];
+
+function detectDelimiter(text) {
+  const firstLine = text.split("\n")[0] || "";
+  const commas = (firstLine.match(/,/g) || []).length;
+  const tabs = (firstLine.match(/\t/g) || []).length;
+  const semicolons = (firstLine.match(/;/g) || []).length;
+  if (tabs >= commas && tabs >= semicolons && tabs > 0) return "\t";
+  if (semicolons > commas && semicolons > 0) return ";";
+  return ",";
+}
+
+function parseCsvLine(line, delimiter) {
+  const fields = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { current += '"'; i++; }
+      else if (ch === '"') inQuotes = false;
+      else current += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === delimiter) { fields.push(current.trim()); current = ""; }
+      else current += ch;
+    }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
+function parseCsv(text) {
+  const delimiter = detectDelimiter(text);
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [] };
+  const headers = parseCsvLine(lines[0], delimiter);
+  const rows = lines.slice(1).map((l) => parseCsvLine(l, delimiter));
+  return { headers, rows };
+}
+
+function autoMapColumns(headers) {
+  const map = { email: -1, first_name: -1, last_name: -1 };
+  const lower = headers.map((h) => h.toLowerCase().trim());
+  for (let i = 0; i < lower.length; i++) {
+    if (EMAIL_PATTERNS.includes(lower[i])) map.email = i;
+    else if (FIRST_NAME_PATTERNS.includes(lower[i])) map.first_name = i;
+    else if (LAST_NAME_PATTERNS.includes(lower[i])) map.last_name = i;
+  }
+  if (map.email === -1) map.email = 0;
+  return map;
+}
+
+function ImportCsvModal({ segments, onClose, onImported }) {
+  const fileRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [headers, setHeaders] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [colMap, setColMap] = useState({ email: -1, first_name: -1, last_name: -1 });
+  const [targetMode, setTargetMode] = useState("new");
+  const [newName, setNewName] = useState("");
+  const [selectedSegmentId, setSelectedSegmentId] = useState("");
+  const [segSearch, setSegSearch] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleFile = useCallback((file) => {
+    if (!file) return;
+    setFileName(file.name);
+    setError("");
+    setResult(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const { headers: h, rows: r } = parseCsv(e.target.result);
+        if (h.length === 0) { setError("File appears empty"); return; }
+        setHeaders(h);
+        setRows(r);
+        setColMap(autoMapColumns(h));
+      } catch {
+        setError("Failed to parse CSV file");
+      }
+    };
+    reader.readAsText(file);
+  }, []);
+
+  const onDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFile(file);
+  }, [handleFile]);
+
+  const flatSegments = useMemo(() => {
+    return [...segments].sort((a, b) =>
+      (a.display_name || a.name || "").localeCompare(b.display_name || b.name || "")
+    );
+  }, [segments]);
+
+  const filteredSegments = useMemo(() => {
+    if (!segSearch.trim()) return flatSegments;
+    const q = segSearch.toLowerCase();
+    return flatSegments.filter((s) =>
+      (s.display_name || s.name || "").toLowerCase().includes(q)
+    );
+  }, [flatSegments, segSearch]);
+
+  const validEmails = useMemo(() => {
+    if (colMap.email < 0 || rows.length === 0) return 0;
+    return rows.filter((r) => {
+      const v = r[colMap.email];
+      return v && v.includes("@");
+    }).length;
+  }, [rows, colMap.email]);
+
+  const canImport =
+    rows.length > 0 &&
+    colMap.email >= 0 &&
+    validEmails > 0 &&
+    (targetMode === "new" ? newName.trim() : selectedSegmentId);
+
+  const handleImport = async () => {
+    setImporting(true);
+    setError("");
+    setResult(null);
+    try {
+      const contacts = rows
+        .filter((r) => r[colMap.email] && r[colMap.email].includes("@"))
+        .map((r) => ({
+          email: r[colMap.email],
+          first_name: colMap.first_name >= 0 ? r[colMap.first_name] || null : null,
+          last_name: colMap.last_name >= 0 ? r[colMap.last_name] || null : null,
+        }));
+
+      const payload = { contacts };
+      if (targetMode === "new") payload.new_segment_name = newName.trim();
+      else payload.segment_id = selectedSegmentId;
+
+      const res = await importCsvToSegment(payload);
+      setResult(res);
+      onImported();
+    } catch (err) {
+      setError(err.message || "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const previewRows = rows.slice(0, 5);
+  const hasFile = headers.length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+      onClick={(e) => { if (e.target === e.currentTarget && !importing) onClose(); }}
+    >
+      <div
+        className="relative w-full max-w-2xl rounded-xl border shadow-2xl"
+        style={{
+          backgroundColor: "var(--bg-primary)",
+          borderColor: "var(--border)",
+          maxHeight: "90vh",
+          overflow: "auto",
+        }}
+      >
+        <div className="flex items-center justify-between border-b p-5" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Import CSV</h2>
+          {!importing && (
+            <button onClick={onClose} className="rounded p-1" style={{ color: "var(--text-muted)" }}>
+              <X className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-5 p-5">
+          {/* File Upload */}
+          {!hasFile && (
+            <div
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-colors ${dragOver ? "border-solid" : ""}`}
+              style={{
+                borderColor: dragOver ? "var(--accent)" : "var(--border)",
+                backgroundColor: dragOver ? "var(--bg-tertiary)" : "var(--bg-secondary)",
+              }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload className="mb-3 h-10 w-10" style={{ color: "var(--text-muted)" }} />
+              <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                Drop a CSV file here or click to browse
+              </p>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                Supports .csv files with email addresses
+              </p>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => handleFile(e.target.files?.[0])}
+              />
+            </div>
+          )}
+
+          {/* File loaded: preview + mapping */}
+          {hasFile && !result && (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {fileName} — {rows.length} rows, {validEmails} valid emails
+                </p>
+                <button
+                  onClick={() => { setHeaders([]); setRows([]); setFileName(""); setResult(null); setError(""); }}
+                  className="text-xs underline"
+                  style={{ color: "var(--accent)" }}
+                >
+                  Change file
+                </button>
+              </div>
+
+              {/* Column mapping */}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Column Mapping
+                </p>
+                <div className="flex gap-3">
+                  {[
+                    { key: "email", label: "Email *" },
+                    { key: "first_name", label: "First Name" },
+                    { key: "last_name", label: "Last Name" },
+                  ].map(({ key, label }) => (
+                    <div key={key} className="flex-1">
+                      <label className="mb-1 block text-xs" style={{ color: "var(--text-secondary)" }}>
+                        {label}
+                      </label>
+                      <select
+                        value={colMap[key]}
+                        onChange={(e) => setColMap((prev) => ({ ...prev, [key]: parseInt(e.target.value) }))}
+                        className="w-full rounded border px-2 py-1.5 text-sm"
+                        style={{
+                          borderColor: "var(--border)",
+                          backgroundColor: "var(--bg-secondary)",
+                          color: "var(--text-primary)",
+                        }}
+                      >
+                        <option value={-1}>(skip)</option>
+                        {headers.map((h, i) => (
+                          <option key={i} value={i}>{h}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview table */}
+              {previewRows.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                    Preview (first {previewRows.length} rows)
+                  </p>
+                  <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr style={{ backgroundColor: "var(--bg-secondary)" }}>
+                          {headers.map((h, i) => (
+                            <th
+                              key={i}
+                              className="px-3 py-2 text-left font-medium"
+                              style={{ color: "var(--text-secondary)" }}
+                            >
+                              {h}
+                              {colMap.email === i && <span className="ml-1 text-green-600">(Email)</span>}
+                              {colMap.first_name === i && <span className="ml-1 text-blue-500">(First)</span>}
+                              {colMap.last_name === i && <span className="ml-1 text-blue-500">(Last)</span>}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewRows.map((row, ri) => (
+                          <tr key={ri} className="border-t" style={{ borderColor: "var(--border)" }}>
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-3 py-1.5" style={{ color: "var(--text-primary)" }}>
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Target segment */}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Target Segment
+                </p>
+                <div className="mb-3 flex gap-4">
+                  {[
+                    { value: "new", label: "Create new segment" },
+                    { value: "existing", label: "Add to existing segment" },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex cursor-pointer items-center gap-2 text-sm" style={{ color: "var(--text-primary)" }}>
+                      <input
+                        type="radio"
+                        name="targetMode"
+                        value={value}
+                        checked={targetMode === value}
+                        onChange={() => setTargetMode(value)}
+                        style={{ accentColor: "var(--accent)" }}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+
+                {targetMode === "new" && (
+                  <input
+                    type="text"
+                    placeholder="Segment name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    className="w-full rounded border px-3 py-2 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                )}
+
+                {targetMode === "existing" && (
+                  <div>
+                    <div className="relative mb-2">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4" style={{ color: "var(--text-muted)" }} />
+                      <input
+                        type="text"
+                        placeholder="Search segments..."
+                        value={segSearch}
+                        onChange={(e) => setSegSearch(e.target.value)}
+                        className="w-full rounded border py-2 pl-8 pr-3 text-sm"
+                        style={{
+                          borderColor: "var(--border)",
+                          backgroundColor: "var(--bg-secondary)",
+                          color: "var(--text-primary)",
+                        }}
+                      />
+                    </div>
+                    <div
+                      className="max-h-40 overflow-y-auto rounded border"
+                      style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}
+                    >
+                      {filteredSegments.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedSegmentId(s.id)}
+                          className="block w-full px-3 py-1.5 text-left text-sm transition-colors"
+                          style={{
+                            color: "var(--text-primary)",
+                            backgroundColor: selectedSegmentId === s.id ? "var(--bg-tertiary)" : undefined,
+                          }}
+                        >
+                          {s.display_name || s.name}
+                          <span className="ml-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                            {fmtInt(s.total_contacts)} contacts
+                          </span>
+                        </button>
+                      ))}
+                      {filteredSegments.length === 0 && (
+                        <p className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>No segments found</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Result */}
+          {result && (
+            <div
+              className="flex items-start gap-3 rounded-lg border p-4"
+              style={{ borderColor: "var(--accent)", backgroundColor: "var(--bg-tertiary)" }}
+            >
+              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0" style={{ color: "var(--accent)" }} />
+              <div>
+                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  Import complete
+                </p>
+                <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+                  Added {fmtInt(result.added)} contacts to <strong>{result.segment_name}</strong>
+                  {result.skipped > 0 && <> ({fmtInt(result.skipped)} already existed)</>}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div
+              className="flex items-start gap-3 rounded-lg border border-red-300 p-4 dark:border-red-800"
+              style={{ backgroundColor: "var(--bg-tertiary)" }}
+            >
+              <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
+              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 border-t p-5" style={{ borderColor: "var(--border)" }}>
+          {!result && (
+            <>
+              <button
+                onClick={onClose}
+                disabled={importing}
+                className="rounded-lg border px-4 py-2 text-sm"
+                style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={!canImport || importing}
+                className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                {importing && <Loader2 className="h-4 w-4 animate-spin" />}
+                {importing ? "Importing..." : `Import ${fmtInt(validEmails)} contacts`}
+              </button>
+            </>
+          )}
+          {result && (
+            <button
+              onClick={onClose}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+              style={{ backgroundColor: "var(--accent)" }}
+            >
+              Done
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SegmentsPage({ refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [segments, setSegments] = useState([]);
   const [folders, setFolders] = useState([]);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let mounted = true;
@@ -341,7 +801,7 @@ export default function SegmentsPage({ refreshToken = 0 }) {
     }
     load();
     return () => { mounted = false; };
-  }, [refreshToken]);
+  }, [refreshToken, reloadKey]);
 
   useEffect(() => {
     const allFolderIds = collectFolderIds(folders);
@@ -400,19 +860,29 @@ export default function SegmentsPage({ refreshToken = 0 }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div
-          className="flex h-12 w-12 items-center justify-center rounded-xl"
-          style={{ backgroundColor: "var(--bg-tertiary)" }}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-12 w-12 items-center justify-center rounded-xl"
+            style={{ backgroundColor: "var(--bg-tertiary)" }}
+          >
+            <Layers className="h-6 w-6" style={{ color: "var(--accent)" }} />
+          </div>
+          <div>
+            <h1 className="page-title">Segments</h1>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              {segments.length} total segments
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => setShowImportModal(true)}
+          className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white"
+          style={{ backgroundColor: "var(--accent)" }}
         >
-          <Layers className="h-6 w-6" style={{ color: "var(--accent)" }} />
-        </div>
-        <div>
-          <h1 className="page-title">Segments</h1>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            {segments.length} total segments
-          </p>
-        </div>
+          <Upload className="h-4 w-4" />
+          Import CSV
+        </button>
       </div>
 
       <div className="card p-0">
@@ -484,6 +954,14 @@ export default function SegmentsPage({ refreshToken = 0 }) {
           </table>
         </div>
       </div>
+
+      {showImportModal && (
+        <ImportCsvModal
+          segments={segments}
+          onClose={() => setShowImportModal(false)}
+          onImported={reload}
+        />
+      )}
     </div>
   );
 }
