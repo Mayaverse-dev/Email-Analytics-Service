@@ -232,6 +232,7 @@ class SyncService:
                         "clicked_at": None,
                         "bounced_at": None,
                         "suppressed_at": None,
+                        "complained_at": None,
                         "open_count": 0,
                         "click_count": 0,
                         "last_event_at": None,
@@ -254,6 +255,8 @@ class SyncService:
                     row["bounced_at"] = row["bounced_at"] or event_time
                 elif event_type == "email.suppressed":
                     row["suppressed_at"] = row["suppressed_at"] or event_time
+                elif event_type == "email.complained":
+                    row["complained_at"] = row["complained_at"] or event_time
 
                 last_event_at = row["last_event_at"]
                 if not last_event_at or (event_time and event_time > last_event_at):
@@ -290,12 +293,13 @@ class SyncService:
                         clicked_at,
                         bounced_at,
                         suppressed_at,
+                        complained_at,
                         open_count,
                         click_count,
                         last_event_at,
                         updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (broadcast_id, email_id)
                     DO UPDATE SET
                         email_address = EXCLUDED.email_address,
@@ -306,6 +310,7 @@ class SyncService:
                         clicked_at = EXCLUDED.clicked_at,
                         bounced_at = EXCLUDED.bounced_at,
                         suppressed_at = EXCLUDED.suppressed_at,
+                        complained_at = EXCLUDED.complained_at,
                         open_count = EXCLUDED.open_count,
                         click_count = EXCLUDED.click_count,
                         last_event_at = EXCLUDED.last_event_at,
@@ -323,6 +328,7 @@ class SyncService:
                             row["clicked_at"],
                             row["bounced_at"],
                             row["suppressed_at"],
+                            row["complained_at"],
                             row["open_count"],
                             row["click_count"],
                             row["last_event_at"],
@@ -341,7 +347,8 @@ class SyncService:
                     COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS total_opened,
                     COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) AS total_clicked,
                     COUNT(*) FILTER (WHERE bounced_at IS NOT NULL) AS total_bounced,
-                    COUNT(*) FILTER (WHERE suppressed_at IS NOT NULL) AS total_suppressed
+                    COUNT(*) FILTER (WHERE suppressed_at IS NOT NULL) AS total_suppressed,
+                    COUNT(*) FILTER (WHERE complained_at IS NOT NULL) AS total_complained
                   FROM analytics_broadcast_recipients
                   GROUP BY broadcast_id
                 )
@@ -353,6 +360,7 @@ class SyncService:
                   total_clicked = COALESCE(agg.total_clicked, 0),
                   total_bounced = COALESCE(agg.total_bounced, 0),
                   total_suppressed = COALESCE(agg.total_suppressed, 0),
+                  total_complained = COALESCE(agg.total_complained, 0),
                   open_rate = CASE
                     WHEN COALESCE(agg.total_delivered, 0) = 0 THEN 0
                     ELSE ROUND((agg.total_opened::numeric / agg.total_delivered::numeric) * 100, 4)
@@ -377,6 +385,7 @@ class SyncService:
                   total_clicked = 0,
                   total_bounced = 0,
                   total_suppressed = 0,
+                  total_complained = 0,
                   open_rate = 0,
                   click_rate = 0,
                   synced_at = NOW()
@@ -394,7 +403,8 @@ class SyncService:
                   COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS total_opened,
                   COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) AS total_clicked,
                   COUNT(*) FILTER (WHERE bounced_at IS NOT NULL) AS total_bounced,
-                  COUNT(*) FILTER (WHERE suppressed_at IS NOT NULL) AS total_suppressed
+                  COUNT(*) FILTER (WHERE suppressed_at IS NOT NULL) AS total_suppressed,
+                  COUNT(*) FILTER (WHERE complained_at IS NOT NULL) AS total_complained
                 FROM analytics_broadcast_recipients
                 WHERE email_address IS NOT NULL AND email_address <> ''
                 GROUP BY LOWER(email_address)
@@ -409,6 +419,7 @@ class SyncService:
                     "total_clicked": int(row["total_clicked"] or 0),
                     "total_bounced": int(row["total_bounced"] or 0),
                     "total_suppressed": int(row["total_suppressed"] or 0),
+                    "total_complained": int(row["total_complained"] or 0),
                 }
                 for row in user_agg_rows
             }
@@ -431,6 +442,7 @@ class SyncService:
                         "total_clicked": 0,
                         "total_bounced": 0,
                         "total_suppressed": 0,
+                        "total_complained": 0,
                     },
                 )
                 contact_id = str(contact.get("id") or "").strip() or f"contact:{email}"
@@ -451,6 +463,7 @@ class SyncService:
                         metrics["total_clicked"],
                         metrics["total_bounced"],
                         metrics["total_suppressed"],
+                        metrics["total_complained"],
                         round(open_rate, 4),
                         round(click_rate, 4),
                     )
@@ -471,13 +484,14 @@ class SyncService:
                         total_clicked,
                         total_bounced,
                         total_suppressed,
+                        total_complained,
                         open_rate,
                         click_rate,
                         source,
                         synced_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'resend', NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'resend', NOW()
                     )
                     ON CONFLICT (email, source)
                     DO UPDATE SET
@@ -491,6 +505,7 @@ class SyncService:
                         total_clicked = EXCLUDED.total_clicked,
                         total_bounced = EXCLUDED.total_bounced,
                         total_suppressed = EXCLUDED.total_suppressed,
+                        total_complained = EXCLUDED.total_complained,
                         open_rate = EXCLUDED.open_rate,
                         click_rate = EXCLUDED.click_rate,
                         synced_at = NOW()

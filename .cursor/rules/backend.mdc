@@ -1,0 +1,32 @@
+---
+description: Backend conventions for the Maya Email Analytics FastAPI service
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend Conventions
+
+## Stack
+- Python 3.11+, FastAPI (sync endpoints), psycopg3 + psycopg_pool, PostgreSQL
+- Deployed on Railway via `uvicorn backend.main:app`
+
+## Database
+- Connection pool via `database.py`. Use `with get_db() as conn:` for all DB access.
+- All tables prefixed with `analytics_`. Migrations live in `backend/migrations/` as numbered `.sql` files and auto-run on startup.
+- Aggregates (open_rate, click_rate, totals) are pre-computed at sync time and stored in the table — never compute them at read time.
+
+## Caching
+- In-memory response cache in `cache.py`. All GET endpoints must check cache first.
+- Invalidate with `cache.invalidate_all()` after any data mutation (sync, clear).
+- Cache key = path + sorted query params.
+
+## Auth
+- All `/api` routes require `maya_auth_token` cookie verified via `SHARED_JWT_SECRET` (HS256).
+- Auth is bypassed when `SHARED_JWT_SECRET` is empty (local dev).
+- `/api/health` is public. `/api/auth/check` and `/api/auth/portal-url` are standalone.
+
+## Patterns
+- Routers go in `backend/routers/`. Services in `backend/services/`. Scripts in `backend/scripts/`.
+- Always use parameterized queries (`%s`), never f-strings for SQL.
+- Search endpoints accept `q` param, filter with `LOWER(col) LIKE %query%`.
+- Pagination via `limit`/`offset` query params. Default limit 50.

@@ -1,0 +1,32 @@
+---
+description: Frontend conventions for the Maya Email Analytics React UI
+globs: frontend/**/*.{jsx,js,css}
+alwaysApply: false
+---
+
+# Frontend Conventions
+
+## Stack
+- React 18, Vite, Tailwind CSS 3, Lucide React icons
+- No state management library — plain useState/useEffect
+
+## Theming
+- Light/dark mode via CSS variables defined in `styles.css` and toggled by `ThemeContext`.
+- Colors: `#faf8da` (cream/light bg), `#de0136` (accent red), `#221d1e` (dark bg).
+- Use `var(--bg-primary)`, `var(--text-primary)`, `var(--accent)`, etc. via inline `style` props for theme-aware colors.
+- Tailwind classes for layout/spacing. CSS variable styles for colors.
+
+## Components
+- Use component classes from `styles.css`: `.card`, `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.input`, `.link`, `.badge`, `.table-container`, `.table-header`, `.table-row`, `.table-cell`, `.page-title`, `.section-title`.
+- Icons from `lucide-react` only. Always size with `h-N w-N` classes.
+
+## API & Auth
+- All API calls go through `api/client.js` which sends `credentials: "include"`.
+- On 401 response, the client auto-redirects to the Maya portal login page.
+- Data refreshes are triggered by `refreshToken` / `dataVersion` prop from `App.jsx` after sync/clear.
+
+## Pagination
+- Default page size: 50 rows.
+- Use `ChevronLeft`/`ChevronRight` icons for Previous/Next buttons.
+- Show "Showing X–Y of Z" and "page / totalPages" between buttons.
+- Search resets to page 0.

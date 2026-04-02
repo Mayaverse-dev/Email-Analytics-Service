@@ -1,0 +1,65 @@
+---
+description: Reference for data architecture, sources, and ownership
+alwaysApply: true
+---
+
+# Data Architecture
+
+Our DB is the **source of truth** for segment membership and contact-segment relationships. Resend is a downstream consumer kept in sync via push during sync.
+
+## Segment Membership
+
+Managed via `contact_segment_memberships` junction table (NOT the old `segment_ids` array, which has been dropped).
+
+| Column | Description |
+|--------|-------------|
+| `contact_email` | Lowercase email (PK with segment_id) |
+| `segment_id` | UUID referencing analytics_segments |
+| `source` | How membership was created: `'import'`, `'broadcast'`, `'kit'`, `'api'` |
+| `synced_to_resend` | FALSE until pushed to Resend during sync |
+
+All segment IDs are Resend UUIDs. Kit synthetic UUIDs have been migrated.
+
+## Segments
+
+`analytics_segments` has two name columns:
+- `name`: Resend-canonical name, updated by sync
+- `display_name`: User-facing name shown in UI, only changed via rename API
+
+Sync does NOT create new segments. New segments are created only via `POST /api/segments` or import scripts. Sync only updates `name` and stats on existing segments.
+
+## Data Flow
+
+```
+Imports / CRUD APIs → contact_segment_memberships (source of truth)
+                    → analytics_contacts (contact details)
+                    → analytics_segments (segment metadata)
+
+Sync (pull from Resend):
+  - Broadcast metadata → analytics_broadcasts
+  - Webhook events → analytics_broadcast_recipients
+  - Segment names → analytics_segments.name (existing only, no creates)
+  - Broadcast recipients → contact_segment_memberships (source='broadcast')
+  - Recompute aggregate stats
+
+Sync (push to Resend):
+  - Unsynced memberships (synced_to_resend=FALSE) → Resend API
+  - Rate limited at 2 req/sec
+```
+
+## Authentication
+
+- **Browser**: `maya_auth_token` cookie (JWT, set by Maya Dashboard portal)
+- **Service-to-service**: `Authorization: Bearer <token>` header (JWT signed with `SHARED_JWT_SECRET`)
+
+## Raw Tables (historical, read-only)
+
+Kit raw tables (`kit_broadcasts`, `kit_subscribers`, `kit_tags`, etc.) are preserved for reference but no longer actively used. Kit data has been migrated to Resend segments with Resend UUIDs.
+
+Resend webhook events (`resend_wh_emails`) are the source for per-recipient email event data (sent, delivered, opened, clicked, bounced).
+
+## Key Constraints
+
+- Kit API only provided aggregate stats, not per-recipient events. Kit contacts may show 0 for delivery metrics.
+- Resend rate limit: 2 req/sec for contact/segment APIs.
+- Segment membership is append-only via sync (broadcast-derived). Removals only happen via `DELETE /api/contacts/{email}/segments/{id}`.

@@ -170,6 +170,15 @@ class ResendClient:
             )
         return response.json()
 
+    def delete_contact(self, email: str) -> dict[str, Any]:
+        """Delete a contact from Resend entirely. Treats 404 as success."""
+        try:
+            return self._request("DELETE", f"/contacts/{email}")
+        except RuntimeError as e:
+            if "404" in str(e):
+                return {"object": "contact", "deleted": True, "already_gone": True}
+            raise
+
     def close(self) -> None:
         self._client.close()
 
